@@ -8,15 +8,16 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the stringer command to generate them again.
 	var x [1]struct{}
-	_ = x[Float-0]
+	_ = x[Unknown-0]
 	_ = x[Int-1]
 	_ = x[String-2]
 	_ = x[FixedString-3]
+	_ = x[Float-4]
 }
 
-const _ChType_name = "FloatIntStringFixedString"
+const _ChType_name = "UnknownIntStringFixedStringFloat"
 
-var _ChType_index = [...]uint8{0, 5, 8, 14, 25}
+var _ChType_index = [...]uint8{0, 7, 10, 16, 27, 32}
 
 func (i ChType) String() string {
 	if i < 0 || i >= ChType(len(_ChType_index)-1) {
