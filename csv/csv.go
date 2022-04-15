@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
+	"log"
 	"math"
 	"os"
+	"time"
 )
 
 // Reader is a reader compatible with chutils
@@ -22,9 +24,9 @@ type Reader struct {
 	// TableDef is the table def for the csv.  Can be supplied or derived from the csv
 	TableSpec *chutils.TableDef
 	// rdr is csv package reader
-	rdr *csv.Reader
-	// filename is the name of the csv being read
-	filename   string
+	rdr      *csv.Reader
+	filename string
+	// fileHandle to the csv
 	fileHandle *os.File
 }
 
@@ -41,7 +43,7 @@ func NewReader(filename string, separator rune) (*Reader, error) {
 		Separator:  separator,
 		Skip:       0,
 		RowsRead:   0,
-		TableSpec:  nil,
+		TableSpec:  &chutils.TableDef{},
 		rdr:        r,
 		filename:   filename,
 		fileHandle: file,
@@ -61,58 +63,62 @@ func (csvr *Reader) Reset() {
 	return
 }
 
-// BuildTableD builds the TableDef from a CSV csv
-// rowsToExamine is the # of rows of csv to examine in building FieldDefs (e.g. Max, Min, Levels)
-// tol is a fraction to determine the type.  If > tol rows are of type X, then this type is assigned
-func (csvr *Reader) BuildTableDef(rowsToExamine int, tol float64) (td *chutils.TableDef, err error) {
-	// countType keeps track of the field values as the csv is read
-	type countType struct {
-		floats int
-		ints   int
-		legal  chutils.LegalValues
-	}
-
+func (csvr *Reader) Init() (err error) {
 	if csvr.RowsRead != 0 {
-		return nil, &chutils.ReadError{"Cannot call BuildTableD after lines have been read"}
+		return &chutils.ReadError{"Cannot call BuildTableD after lines have been read"}
 	}
 	row, err := csvr.rdr.Read()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	fds := make(map[int]*chutils.FieldDef)
-	td = &chutils.TableDef{}
-	counts := make([]*countType, 0)
 	for ind, fn := range row {
 		fd := &chutils.FieldDef{
 			Name: fn,
 			ChSpec: chutils.ChField{
 				Base: chutils.Unknown},
 			Description: "",
-			Legal:       chutils.LegalValues{},
+			Legal:       &chutils.LegalValues{},
 		}
 		fds[ind] = fd
-		ct := &countType{}
+	}
+	csvr.TableSpec.FieldDefs = fds
+	csvr.rdr.FieldsPerRecord = len(fds)
+
+	return
+}
+
+// BuildTableD builds the TableDef from a CSV csv
+// rowsToExamine is the # of rows of csv to examine in building FieldDefs (e.g. Max, Min, Levels)
+// tol is a fraction to determine the type.  If > tol rows are of type X, then this type is assigned
+func (csvr *Reader) Build(rowsToExamine int, tol float64, fuzz int) (err error) {
+	// countType keeps track of the field values as the csv is read
+	type countType struct {
+		floats int
+		ints   int
+		legal  *chutils.LegalValues
+	}
+	counts := make([]*countType, 0)
+	for ind := 0; ind < len(csvr.TableSpec.FieldDefs); ind++ {
+		ct := &countType{legal: chutils.NewLegalValues()}
 		counts = append(counts, ct)
 	}
-	numFields := len(fds)
-	csvr.rdr.FieldsPerRecord = numFields
-
+	numFields := len(csvr.TableSpec.FieldDefs)
 	// now look at RowsToExamine rows to see what types we have
 	rowCount := 1
 	for ; ; rowCount++ {
-		row, err = csvr.rdr.Read()
+		row, err := csvr.rdr.Read()
 		if err == io.EOF {
 			err = nil
 			break
 		}
 		if err != nil {
 			err = &chutils.ReadError{Err: fmt.Sprintf("Error reading csv, row: %v", rowCount)}
-			return nil, err
+			return err
 		}
 		for ind := 0; ind < len(row); ind++ {
 			fval := row[ind]
-			//		for ind, fval := range row {
 			if counts[ind].legal.Update(fval, "int") {
 				counts[ind].ints++
 			} else {
@@ -131,28 +137,45 @@ func (csvr *Reader) BuildTableDef(rowsToExamine int, tol float64) (td *chutils.T
 	// threshold to determine which type a field is (100*tol % agreement)
 	thresh := int(math.Max(1.0, tol*float64(rowCount)))
 	for ind := 0; ind < numFields; ind++ {
-		switch {
-		case counts[ind].ints > thresh:
-			fds[ind].ChSpec.Base = chutils.Int
-			fds[ind].ChSpec.Length = 64
-			fds[ind].Missing = math.MaxInt32
-			fds[ind].Legal = counts[ind].legal
-		case counts[ind].floats > thresh:
-			fds[ind].ChSpec.Base = chutils.Float
-			fds[ind].ChSpec.Length = 64
-			fds[ind].Missing = math.MaxFloat32
-			fds[ind].Legal = counts[ind].legal
-		default:
-			fds[ind].ChSpec.Base = chutils.String
-			fds[ind].Missing = "Missing"
-			fds[ind].Legal = counts[ind].legal
+		// only impute type if user has not specified it
+		if csvr.TableSpec.FieldDefs[ind].ChSpec.Base == chutils.Unknown {
+			switch {
+			case counts[ind].ints >= thresh:
+				csvr.TableSpec.FieldDefs[ind].ChSpec.Base = chutils.Int
+				csvr.TableSpec.FieldDefs[ind].ChSpec.Length = 64
+				csvr.TableSpec.FieldDefs[ind].Missing = math.MaxInt32
+				// TODO: zero out Levels
+				csvr.TableSpec.FieldDefs[ind].Legal = counts[ind].legal
+				csvr.TableSpec.FieldDefs[ind].Legal.Levels = nil
+			case counts[ind].floats >= thresh:
+				csvr.TableSpec.FieldDefs[ind].ChSpec.Base = chutils.Float
+				csvr.TableSpec.FieldDefs[ind].ChSpec.Length = 64
+				csvr.TableSpec.FieldDefs[ind].Missing = math.MaxFloat32
+				csvr.TableSpec.FieldDefs[ind].Legal = counts[ind].legal
+				csvr.TableSpec.FieldDefs[ind].Legal.Levels = nil
+			default:
+				csvr.TableSpec.FieldDefs[ind].ChSpec.Base = chutils.String
+				csvr.TableSpec.FieldDefs[ind].Missing = "Missing"
+				csvr.TableSpec.FieldDefs[ind].Legal.Levels = counts[ind].legal.Levels
+				csvr.TableSpec.FieldDefs[ind].Legal.LowLimit = nil
+				csvr.TableSpec.FieldDefs[ind].Legal.HighLimit = nil
+			}
+		}
+		if fuzz > 0 && (csvr.TableSpec.FieldDefs[ind].ChSpec.Base == chutils.String ||
+			csvr.TableSpec.FieldDefs[ind].ChSpec.Base == chutils.FixedString) {
+			// drop any with counts below fuzz
+			for k, f := range *csvr.TableSpec.FieldDefs[ind].Legal.Levels {
+				// TODO: change fuzz to float??
+				if f <= fuzz {
+					delete(*csvr.TableSpec.FieldDefs[ind].Legal.Levels, k)
+				}
+			}
 		}
 	}
 
-	td.FieldDefs = fds
 	csvr.Reset()
 
-	return td, nil
+	return nil
 }
 
 // Read reads rows from the csv and do type conversion, validation
@@ -198,3 +221,42 @@ func (csvr *Reader) Read(numRow int) (data []chutils.Row, err error) {
 
 	return
 }
+
+func Write(csvr *Reader) (err error) {
+	csvr.Reset()
+	//	csvr.Skip = 0
+	fmt.Println("start reading", time.Now())
+	data, err := csvr.Read(0)
+	err = os.Remove("/home/will/tmp/try.csv")
+	f, err := os.Create("/home/will/tmp/try.csv")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	f.Close()
+	fmt.Println("start writing", time.Now())
+	file, err := os.OpenFile("/home/will/tmp/try.csv", os.O_RDWR, 0644)
+	defer file.Close()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	for r := 0; r < len(data); r++ {
+		for c := 0; c < len(data[r]); c++ {
+			char := ","
+			if c == len(data[r])-1 {
+				char = "\n"
+			}
+			switch v := data[r][c].(type) {
+			case string:
+				file.WriteString(fmt.Sprintf("'%s'%s", v, char))
+			default:
+				file.WriteString(fmt.Sprintf("%v%s", v, char))
+
+			}
+		}
+	}
+	fmt.Println("done writing", time.Now())
+
+	return nil
+}
+
+// TODO: make enum of format types CSV, TabSeparated, CSVWithNames

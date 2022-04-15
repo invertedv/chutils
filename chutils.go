@@ -1,10 +1,11 @@
 package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON?
+//TODO: fieldefs map[int]string --> make the key the field name and add a struc feature 'order'
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"os/exec"
 	"strconv"
 )
 
@@ -19,14 +20,14 @@ func (e *ReadError) Error() string {
 // ChType enum is supported ClickHouse types.
 type ChType int
 
-//ClickHouse types supported
+//ClickHouse base types supported
 //TODO: remove FixedString and look for a >0 value of Length
 const (
-	Unknown ChType = 0 + iota
-	Int
-	String
-	FixedString
-	Float
+	Unknown     ChType = 0 + iota // Unknown: ClickHouse type is undetermined
+	Int                           // Int: Clickhouse type is Integer
+	String                        // String: Clickhouse type is String (possibly FixedString)
+	FixedString                   // FixedString
+	Float                         // Float: Clickhouse type is Float
 )
 
 // interface with a read/load methods to pull data from A and load to B
@@ -35,10 +36,9 @@ const (
 
 // ChField struc holds a ClickHouse field type
 type ChField struct {
-	Base   ChType
-	Length int
-	// e.g. LowCardinality()
-	OuterFunc string
+	Base      ChType // Base: base type of ClickHouse field
+	Length    int    // Length: length of field (0 for String)
+	OuterFunc string // OuterFunc: Outer function applied (e.g. LowCardinality())
 }
 
 // Converter method converts an aribtrary value to the ClickHouse type requested.
@@ -81,6 +81,11 @@ type LegalValues struct {
 	LowLimit  interface{}
 	HighLimit interface{}
 	Levels    *map[string]int
+}
+
+func NewLegalValues() *LegalValues {
+	x := make(map[string]int)
+	return &LegalValues{Levels: &x}
 }
 
 // Check checks whether chekcVal is a legal value
@@ -193,25 +198,17 @@ func (l *LegalValues) Update(newVal string, varType string) bool {
 // This is in the same order of the TableDef FieldDefs slice
 type Row []interface{}
 
-// A Table is a slice of Rows
-type Table []Row
-
 // Status is the validation status of a particular instance of a ChField
 // as judged against its ClickHouse type and acceptable values
 type Status int
 
 // Field Validation Status enum type
 const (
-	// Validation not done
-	Pending Status = 0 + iota
-	// Value is out of range
-	ValueFail
-	// Cannot be coerced to correct type
-	TypeFail
-	// Value calculated from other fields
-	Calculated
-	// Passed
-	Pass
+	Pending    Status = 0 + iota // Pending means the validation status is not determined
+	ValueFail                    // ValueFail: Value is illegal
+	TypeFail                     // TypeFail: value cannot be coerced to correct type
+	Calculated                   // Calculated: value is calculated from other fields
+	Pass                         // Pass: Value is OK
 )
 
 //go:generate stringer -type=Status
@@ -219,12 +216,13 @@ const (
 // TODO: change to *ChField
 // FieldDef struct holds the definition of single ClickHouse field
 type FieldDef struct {
-	Name        string
-	ChSpec      ChField
-	Description string
-	Legal       LegalValues
-	Missing     interface{}
-	Calculator  func(fs Row) interface{}
+	Name        string                   // Name of field
+	ChSpec      ChField                  // ChSpec is the Clickhouse specification of field
+	Description string                   // Description is an optional description for CREATE TABLE
+	Legal       *LegalValues             // Legal are optional bounds/list of legal values
+	Missing     interface{}              // Missing is the value used for a field if the value is missing/illegal
+	Calculator  func(fs Row) interface{} // Calculator is an optional function to calculate the field if it is
+	// missing or illegal
 }
 
 // Validator method to check the Value of Field is legal
@@ -265,8 +263,19 @@ type TableDef struct {
 	FieldDefs map[int]*FieldDef
 }
 
-// CreateTable func builds and issues CREATE TABLE ClickHouse statement
-func (td TableDef) CreateTable(db *sql.DB) (err error) {
+// Get returns the FieldDef for field "name", nil if there is not such a field.
+func (td *TableDef) Get(name string) (fd *FieldDef) {
+	for _, fd := range td.FieldDefs {
+		if fd.Name == name {
+			return fd
+		}
+		return nil
+	}
+	return
+}
+
+// Create func builds and issues CREATE TABLE ClickHouse statement
+func (td *TableDef) Create(db *sql.DB) (err error) {
 	//db should be database object
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", td.Name)
 	_, err = db.Exec(qry)
@@ -301,35 +310,56 @@ func (td TableDef) CreateTable(db *sql.DB) (err error) {
 
 // Reader is the interface required for Load
 type Reader interface {
+	// reads rows from the source
 	Read(nTarget int) (data []Row, err error)
 	Reset()
 	Close()
 }
 
-func (t *Table) InsertRows(l Reader, nRow int) (nInserted int, err error) {
-	return 0, nil
-}
-
-func Load(td TableDef, t Reader, rowCount int, db *sql.DB) {
+func InsertFile(td TableDef, t Reader, rowCount int, db *sql.DB) (err error) {
 	qry := fmt.Sprintf("INSERT INTO %s VALUES \n", td.Name)
 	data, _ := t.Read(rowCount)
 	for r := 0; r < len(data); r++ {
 		qry += "("
 		for c := 0; c < len(data[r]); c++ {
-			char := ","
-			if c == len(data[r])-1 {
-				char = ")\n"
-			}
+			//			char := ","
+			//			if c == len(data[r])-1 {
+			//				char = ")\n"
+			//			}
 			v := data[r][c]
 			if td.FieldDefs[c].ChSpec.Base == String {
 				v = fmt.Sprintf("'%s'", v)
 			}
-			qry = fmt.Sprintf("%s %v %s", qry, v, char)
+			//qry += fmt.Sprintf("%v %s", v, char)
+			qry += "a"
 		}
 	}
-	fmt.Println(qry)
-	_, err := db.Exec(qry)
-	if err != nil {
-		log.Fatalln(err)
+	fmt.Println("Loading")
+	_, err = db.Exec(qry)
+	return
+}
+
+type FileFormat int
+
+// TODO examine what format to use for flat files
+const (
+	CSV FileFormat = 0 + iota
+	CSVWithNames
+	TabSeparated
+)
+
+//go:generate stringer -type=FileFormat
+
+func Fileload(tablename string, filename string, delim string, format FileFormat, options string, host string,
+	user string, password string) (err error) {
+	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", host, user)
+	if password != "" {
+		cmd = fmt.Sprintf("%s --password=%s", cmd, password)
 	}
+	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, delim)
+	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, tablename, format, filename)
+	// running clickhouse-client as a command chokes on --query
+	c := exec.Command("bash", "-c", cmd)
+	err = c.Run()
+	return
 }
