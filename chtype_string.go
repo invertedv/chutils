@@ -13,11 +13,12 @@ func _() {
 	_ = x[String-2]
 	_ = x[FixedString-3]
 	_ = x[Float-4]
+	_ = x[Date-5]
 }
 
-const _ChType_name = "UnknownIntStringFixedStringFloat"
+const _ChType_name = "UnknownIntStringFixedStringFloatDate"
 
-var _ChType_index = [...]uint8{0, 7, 10, 16, 27, 32}
+var _ChType_index = [...]uint8{0, 7, 10, 16, 27, 32, 36}
 
 func (i ChType) String() string {
 	if i < 0 || i >= ChType(len(_ChType_index)-1) {
