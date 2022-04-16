@@ -2,6 +2,7 @@ package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON?
 //TODO: add multiple date formats
+//TODO: handle user-supplied date format + figuring out the date format
 
 import (
 	"database/sql"
@@ -173,19 +174,17 @@ func (l *LegalValues) Update(newVal string, target ChType) (res ChType) {
 
 	// Figure out what this newVal might be
 	if res == Unknown {
-		// order of assigning: Int, Float, String
+		// order of assigning: Date, Int, Float, String
 		// LowLimit, HighLimit are float64. Converted to int later (if need be)
 		res = String
+		// float ?
+		if _, err := strconv.ParseFloat(newVal, 64); err == nil {
+			res = Float
+		}
 		// int ?
 		if _, err := strconv.ParseInt(newVal, 10, 64); err == nil {
 			res = Int
 		}
-		// float ?
-		_, err := strconv.ParseFloat(newVal, 64)
-		if err == nil && res == String {
-			res = Float
-		}
-		// date ?
 		if _, err := time.Parse("2006-01-02", newVal); err == nil {
 			res = Date
 		}
