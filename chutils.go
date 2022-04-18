@@ -1,8 +1,7 @@
 package chutils
 
-//TODO: add read and write functions to TableDefs -- JSON?
-//TODO: add multiple date formats
-//TODO: handle user-supplied date format + figuring out the date format
+//TODO: add read and write functions to TableDefs -- JSON? yes? no?
+//TODO implement outerFunc()
 
 import (
 	"database/sql"
@@ -30,15 +29,23 @@ func (e *InputError) Error() string {
 	return e.Err
 }
 
+type EngineType int
+
+const (
+	MergeTree EngineType = 0 + iota
+	Memory
+)
+
+//go:generate stringer -type=EngineType
+
 // ChType enum is supported ClickHouse types.
 type ChType int
 
-//TODO: remove FixedString and look for a >0 value of Length
 //ClickHouse base types supported
 const (
 	Unknown     ChType = 0 + iota // Unknown: ClickHouse type is undetermined
 	Int                           // Int: ClickHouse type is Integer
-	String                        // String: ClickHouse type is String (possibly FixedString)
+	String                        // String: ClickHouse type is String
 	FixedString                   // FixedString
 	Float                         // Float: ClickHouse type is Float
 	Date                          // Date: ClickHouse type is Date
@@ -78,7 +85,7 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 				return nil, false
 			}
 		case int:
-			fmt.Println("FILL ME IN")
+			fmt.Println("FILL ME IN -- check will fit in type length")
 		}
 	case Int:
 		switch x := (inValue).(type) {
@@ -167,10 +174,10 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 // Update takes a LegalValues struc and updates it with newVal
 // If it's a int/float field, it will update High/Low.
 // If it's a descrete field, it will add (if needed) the field to the map and update the count
-func (l *LegalValues) Update(newVal string, target ChType) (res ChType) {
+func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 	// if target != Unknown, this will force the type indicated by target
 
-	res = target
+	res = target.Base
 
 	// Figure out what this newVal might be
 	if res == Unknown {
@@ -185,7 +192,7 @@ func (l *LegalValues) Update(newVal string, target ChType) (res ChType) {
 		if _, err := strconv.ParseInt(newVal, 10, 64); err == nil {
 			res = Int
 		}
-		if _, err := time.Parse("2006-01-02", newVal); err == nil {
+		if _, _, err := FindFormat(newVal); err == nil {
 			res = Date
 		}
 	}
@@ -215,9 +222,20 @@ func (l *LegalValues) Update(newVal string, target ChType) (res ChType) {
 		}
 		(*l.Levels)[newVal]++
 	case Date:
-		vx, err := time.Parse("2006-01-02", newVal)
-		if err != nil {
-			return
+		var (
+			vx  time.Time
+			f   string
+			err error
+		)
+		if target.DateFormat != "" {
+			if vx, err = time.Parse(target.DateFormat, newVal); err != nil {
+				return
+			}
+		} else {
+			if f, vx, err = FindFormat(newVal); err != nil {
+				return
+			}
+			target.DateFormat = f
 		}
 		if l.FirstDate == nil || l.LastDate == nil {
 			l.FirstDate = &vx
@@ -276,6 +294,9 @@ func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue in
 		outValue = fd.Missing
 		return
 	}
+
+	// TODO: length check to include int, float, change Missing to Max value for length
+	// check FixedString is not too long
 	if fd.Legal.Check(outValue) {
 		return
 	}
@@ -299,7 +320,7 @@ func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue in
 type TableDef struct {
 	Name   string
 	Key    string
-	Engine string
+	Engine EngineType
 	//key is column ordering of table
 	FieldDefs map[int]*FieldDef
 }
@@ -312,6 +333,20 @@ func (td *TableDef) Get(name string) *FieldDef {
 		}
 	}
 	return nil
+}
+
+func FindFormat(inDate string) (format string, date time.Time, err error) {
+	var formats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
+		"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601"}
+
+	format = ""
+	for _, format = range formats {
+		date, err = time.Parse(format, inDate)
+		if err == nil {
+			return
+		}
+	}
+	return
 }
 
 // TODO: change this to stream
@@ -343,7 +378,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 	for rowCount = 0; rowCount < len(data); rowCount++ {
 		for ind := 0; ind < len(data[rowCount]); ind++ {
 			fval := fmt.Sprintf("%s", data[rowCount][ind])
-			switch counts[ind].legal.Update(fval, td.FieldDefs[ind].ChSpec.Base) {
+			switch counts[ind].legal.Update(fval, &td.FieldDefs[ind].ChSpec) {
 			case Int:
 				counts[ind].ints++
 			case Float:
@@ -361,7 +396,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 		if fd.ChSpec.Base == Unknown {
 			switch {
 			case counts[ind].dates >= thresh:
-				fd.ChSpec.Base, fd.ChSpec.Length, fd.ChSpec.DateFormat = Date, 0, "2006-01-02"
+				fd.ChSpec.Base, fd.ChSpec.Length = Date, 0
 				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
 				fd.Legal.FirstDate, fd.Legal.LastDate = counts[ind].legal.FirstDate, counts[ind].legal.LastDate
 				fd.Missing = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -433,7 +468,7 @@ func (td *TableDef) Create(db *sql.DB) (err error) {
 		ftype = fmt.Sprintf("%s%s\n", ftype, char)
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
-	qry = fmt.Sprintf("%s ENGINE=%s()\nORDER BY (%s)", qry, td.Engine, td.Key)
+	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
 	fmt.Println(qry)
 	_, err = db.Exec(qry)
 	return
@@ -495,7 +530,7 @@ func InsertSql(table string, qry string) (err error) {
 }
 
 // Export exports data from Input to a CSV file
-func Export(rdr Input, nTarget int, separator rune) (err error) {
+func Export1(rdr Input, nTarget int, separator rune) (err error) {
 	// TODO: see if pre-converting to string makes this faster
 	const newLine = '\n'
 
@@ -545,4 +580,54 @@ func Export(rdr Input, nTarget int, separator rune) (err error) {
 	return nil
 }
 
-//TODO: consider converting all these to streaming....
+func Export(rdr Input, nTarget int, separator rune) (err error) {
+	const newLine = "\n"
+
+	sep := string(separator)
+	fmt.Println("start reading", time.Now())
+
+	_ = os.Remove("/home/will/tmp/try.csv")
+	f, err := os.Create("/home/will/tmp/try.csv")
+	if err != nil {
+		return
+	}
+	_ = f.Close()
+	fmt.Println("start writing", time.Now())
+	file, err := os.OpenFile("/home/will/tmp/try.csv", os.O_RDWR, 0644)
+	defer file.Close()
+	if err != nil {
+		return
+	}
+	var data []Row
+	for r := 0; nTarget == 0 || (nTarget > 0 && r < nTarget); r++ {
+
+		if data, err = rdr.Read(1, true); err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			fmt.Println("done writing", time.Now())
+			return
+		}
+		for c := 0; c < len(data[0]); c++ {
+			char := sep
+			if c == len(data[0])-1 {
+				char = newLine
+			}
+			switch v := data[0][c].(type) {
+			case string:
+				_, err = file.WriteString(fmt.Sprintf("'%s'%s", v, char))
+			case time.Time:
+				//a := fmt.Sprintf("%s%s", v.Format("2006-01-02"), string(char))
+				//fmt.Println(a)
+				_, err = file.WriteString(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))
+			default:
+				_, err = file.WriteString(fmt.Sprintf("%v%s", v, char))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	return nil
+}

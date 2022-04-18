@@ -100,7 +100,6 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 	for rowCount := 1; ; rowCount++ {
 		csvrow, err = csvr.rdr.Read()
 		if err == io.EOF {
-			//err = nil
 			return
 		}
 		if err != nil {
