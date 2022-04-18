@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Input is the interface for reading source data (csv, flat file, query)
+// Input is the interface for reading source data (file, flat file, query)
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
 	Reset()                                                  // Resets to beginning of table
@@ -352,7 +352,7 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 // TODO: change this to stream
 // Impute looks at the data and builds the FieldDefs
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) (err error) {
-	// countType keeps track of the field values as the csv is read
+	// countType keeps track of the field values as the file is read
 	type countType struct {
 		floats int
 		ints   int
@@ -542,14 +542,14 @@ func Export1(rdr Input, nTarget int, separator rune) (err error) {
 	if err != nil {
 		return
 	}
-	_ = os.Remove("/home/will/tmp/try.csv")
-	f, err := os.Create("/home/will/tmp/try.csv")
+	_ = os.Remove("/home/will/tmp/try.file")
+	f, err := os.Create("/home/will/tmp/try.file")
 	if err != nil {
 		return
 	}
 	_ = f.Close()
 	fmt.Println("start writing", time.Now())
-	file, err := os.OpenFile("/home/will/tmp/try.csv", os.O_RDWR, 0644)
+	file, err := os.OpenFile("/home/will/tmp/try.file", os.O_RDWR, 0644)
 	defer file.Close()
 	if err != nil {
 		return
@@ -580,20 +580,20 @@ func Export1(rdr Input, nTarget int, separator rune) (err error) {
 	return nil
 }
 
-func Export(rdr Input, nTarget int, separator rune) (err error) {
+func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) {
 	const newLine = "\n"
 
 	sep := string(separator)
 	fmt.Println("start reading", time.Now())
 
-	_ = os.Remove("/home/will/tmp/try.csv")
-	f, err := os.Create("/home/will/tmp/try.csv")
+	_ = os.Remove(outFile)
+	f, err := os.Create(outFile)
 	if err != nil {
 		return
 	}
 	_ = f.Close()
 	fmt.Println("start writing", time.Now())
-	file, err := os.OpenFile("/home/will/tmp/try.csv", os.O_RDWR, 0644)
+	file, err := os.OpenFile(outFile, os.O_RDWR, 0644)
 	defer file.Close()
 	if err != nil {
 		return
@@ -604,6 +604,9 @@ func Export(rdr Input, nTarget int, separator rune) (err error) {
 		if data, err = rdr.Read(1, true); err != nil {
 			if err == io.EOF {
 				err = nil
+			}
+			if err != nil {
+				return
 			}
 			fmt.Println("done writing", time.Now())
 			return
@@ -629,5 +632,6 @@ func Export(rdr Input, nTarget int, separator rune) (err error) {
 		}
 	}
 
+	fmt.Println("done writing", time.Now())
 	return nil
 }

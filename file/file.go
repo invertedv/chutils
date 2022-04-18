@@ -1,35 +1,35 @@
-package csv
+package file
 
 //TODO: think about files w/o headers
 
 import (
-	"encoding/csv"
+	"bufio"
 	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
 	"os"
+	"strings"
 )
 
 // Reader is a reader compatible with chutils
 type Reader struct {
-	Separator  rune              // Separator between fields in the csv
-	Skip       int               // Skip is the # of rows to skip in the csv
-	RowsRead   int               // Rowsread is current count of rows read from the csv
-	TableSpec  *chutils.TableDef // TableDef is the table def for the csv.  Can be supplied or derived from the csv
-	rdr        *csv.Reader       // rdr is encoding/csv package reader
+	Separator  string            // Separator between fields in the file
+	Skip       int               // Skip is the # of rows to skip in the file
+	RowsRead   int               // Rowsread is current count of rows read from the file
+	TableSpec  *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
+	rdr        *bufio.Reader     // rdr is encoding/file package reader
 	filename   string            // file we are reading from
-	fileHandle *os.File          // fileHandle to the csv
+	fileHandle *os.File          // fileHandle to the file
 }
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune) (*Reader, error) {
+func NewReader(filename string, separator string) (*Reader, error) {
 	file, err := os.Open(filename)
 
 	if err != nil {
 		return nil, err
 	}
-	r := csv.NewReader(file)
-	r.Comma = separator
+	r := bufio.NewReader(file)
 	return &Reader{
 		Separator:  separator,
 		Skip:       0,
@@ -48,9 +48,22 @@ func (csvr *Reader) Close() {
 // Reset sets the file pointer to the start of the file
 func (csvr *Reader) Reset() {
 	csvr.fileHandle.Seek(0, 0)
-	csvr.rdr = csv.NewReader(csvr.fileHandle)
-	csvr.rdr.Comma = csvr.Separator
+	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	//	csvr.rdr = file.NewReader(csvr.fileHandle)
+	//	csvr.rdr.Comma = csvr.Separator
 	csvr.RowsRead = 0
+	return
+}
+
+func (csvr *Reader) Seek(lineNo int) (err error) {
+
+	csvr.fileHandle.Seek(0, 0)
+	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
+		if _, err = csvr.rdr.ReadString('\n'); err != nil {
+			return
+		}
+	}
 	return
 }
 
@@ -58,7 +71,7 @@ func (csvr *Reader) Init() (err error) {
 	if csvr.RowsRead != 0 {
 		return &chutils.InputError{"Cannot call BuildTableD after lines have been read"}
 	}
-	row, err := csvr.rdr.Read()
+	row, err := csvr.GetLine()
 	if err != nil {
 		return err
 	}
@@ -75,35 +88,45 @@ func (csvr *Reader) Init() (err error) {
 		fds[ind] = fd
 	}
 	csvr.TableSpec.FieldDefs = fds
-	csvr.rdr.FieldsPerRecord = len(fds)
+	//	csvr.rdr.FieldsPerRecord = len(fds)
 	csvr.Reset()
 
 	return
 }
 
-// Read reads rows from the csv and do type conversion, validation
+func (csvr *Reader) GetLine() (line []string, err error) {
+	l, err := csvr.rdr.ReadString('\n')
+	line = strings.Split(l, csvr.Separator)
+	return
+}
+
+// Read reads rows from the file and do type conversion, validation
 func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err error) {
 	var csvrow []string
 
 	if csvr.RowsRead == 0 && csvr.Skip > 0 {
 		for i := 0; i < csvr.Skip; i++ {
-			_, err = csvr.rdr.Read()
+			_, err = csvr.GetLine()
 			if err != nil {
 				return
 			}
 		}
 	}
 	numFields := len(csvr.TableSpec.FieldDefs)
-	csvr.rdr.FieldsPerRecord = numFields
+	//	csvr.rdr.FieldsPerRecord = numFields
 
 	data = make([]chutils.Row, 0)
 	for rowCount := 1; ; rowCount++ {
-		csvrow, err = csvr.rdr.Read()
+		csvrow, err = csvr.GetLine()
 		if err == io.EOF {
 			return
 		}
+		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
+			errstr := fmt.Sprintf("Row %v has %v fields but need %v", csvr.RowsRead, have, need)
+			err = &chutils.InputError{errstr}
+		}
 		if err != nil {
-			err = &chutils.InputError{Err: fmt.Sprintf("Error reading csv, row: %v", rowCount)}
+			err = &chutils.InputError{Err: fmt.Sprintf("Error reading file, row: %v", rowCount)}
 			return
 		}
 		outrow := make(chutils.Row, 0)
