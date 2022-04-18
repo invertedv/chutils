@@ -1,6 +1,5 @@
+// file package handles creating readers for files
 package file
-
-//TODO: think about files w/o headers
 
 import (
 	"bufio"
@@ -17,13 +16,16 @@ type Reader struct {
 	Skip       int               // Skip is the # of rows to skip in the file
 	RowsRead   int               // Rowsread is current count of rows read from the file
 	TableSpec  *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
+	EOL        byte              // EOL is the end of line character
+	Width      int               // Line width for flat files
 	rdr        *bufio.Reader     // rdr is encoding/file package reader
 	filename   string            // file we are reading from
 	fileHandle *os.File          // fileHandle to the file
+
 }
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator string) (*Reader, error) {
+func NewReader(filename string, separator string, eol byte, width int) (*Reader, error) {
 	file, err := os.Open(filename)
 
 	if err != nil {
@@ -35,6 +37,8 @@ func NewReader(filename string, separator string) (*Reader, error) {
 		Skip:       0,
 		RowsRead:   0,
 		TableSpec:  &chutils.TableDef{},
+		EOL:        eol,
+		Width:      width,
 		rdr:        r,
 		filename:   filename,
 		fileHandle: file,
@@ -60,7 +64,7 @@ func (csvr *Reader) Seek(lineNo int) (err error) {
 	csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
-		if _, err = csvr.rdr.ReadString('\n'); err != nil {
+		if _, err = csvr.rdr.ReadString(csvr.EOL); err != nil {
 			return
 		}
 	}
@@ -88,15 +92,40 @@ func (csvr *Reader) Init() (err error) {
 		fds[ind] = fd
 	}
 	csvr.TableSpec.FieldDefs = fds
-	//	csvr.rdr.FieldsPerRecord = len(fds)
-	csvr.Reset()
+	// don't think this is needed
+	//	csvr.Reset()
 
 	return
 }
 
 func (csvr *Reader) GetLine() (line []string, err error) {
-	l, err := csvr.rdr.ReadString('\n')
-	line = strings.Split(l, csvr.Separator)
+	if csvr.Width == 0 {
+		var l string
+		if l, err = csvr.rdr.ReadString(csvr.EOL); err != nil {
+			return make([]string, 0), err
+		}
+		line = strings.Split(l, csvr.Separator)
+		return
+	}
+	// file has fixed-width structure (flat file)
+	l := make([]byte, csvr.Width)
+	if _, err = io.ReadFull(csvr.rdr, l); err != nil {
+		if err == io.ErrUnexpectedEOF {
+			return nil, io.EOF
+		}
+		return nil, err
+	}
+	lstr := string(l)
+	if len(lstr) != csvr.Width {
+		return make([]string, 0), &chutils.InputError{"Wrong width"}
+	}
+	line = make([]string, len(csvr.TableSpec.FieldDefs))
+	start := 0
+	for ind := 0; ind < len(line); ind++ {
+		w := csvr.TableSpec.FieldDefs[ind].Width
+		line[ind] = lstr[start : start+w]
+		start += w
+	}
 	return
 }
 

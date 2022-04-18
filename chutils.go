@@ -282,6 +282,7 @@ type FieldDef struct {
 	Legal       *LegalValues             // Legal are optional bounds/list of legal values
 	Missing     interface{}              // Missing is the value used for a field if the value is missing/illegal
 	Calculator  func(fs Row) interface{} // Calculator is an optional function to calculate the field
+	Width       int                      // width of field (for flat files)
 }
 
 // Validator method to check the Value of Field is legal
