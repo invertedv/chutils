@@ -71,6 +71,26 @@ func (csvr *Reader) Seek(lineNo int) (err error) {
 	return
 }
 
+func (csvr *Reader) CountLines() (numLines int, err error) {
+	csvr.fileHandle.Seek(0, 0)
+	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	defer csvr.Reset()
+
+	numLines = 0
+	err = nil
+	for e := error(nil); e != io.EOF; {
+		if _, e = csvr.rdr.ReadString(csvr.EOL); e != nil {
+			if e != io.EOF {
+				err = e
+			}
+			numLines -= csvr.Skip
+			return
+		}
+		numLines++
+	}
+	return
+}
+
 func (csvr *Reader) Init() (err error) {
 	if csvr.RowsRead != 0 {
 		return &chutils.InputError{"Cannot call BuildTableD after lines have been read"}

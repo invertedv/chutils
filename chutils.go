@@ -8,17 +8,31 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"time"
 )
+
+type Reader struct {
+	Skip      int       // Skip is the # of rows to skip in the file
+	RowsRead  int       // Rowsread is current count of rows read from the file
+	TableSpec *TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
+}
+
+type Loader struct {
+	*Reader
+}
 
 // Input is the interface for reading source data (file, flat file, query)
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
 	Reset()                                                  // Resets to beginning of table
 	Close()                                                  // Closes file (for file-based sources)
+	CountLines() (numLines int, err error)
+	Seek(lineNo int) (err error)
 }
 
 type InputError struct {
@@ -196,7 +210,6 @@ func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 			res = Date
 		}
 	}
-
 	switch res {
 	case Int, Float:
 		v, err := strconv.ParseFloat(newVal, 64)
@@ -501,7 +514,6 @@ func (td *TableDef) InsertData(t Input, rowCount int, db *sql.DB) (err error) {
 // FileFormat enum has supported file types for bulk insert
 type FileFormat int
 
-// TODO examine what format to use for flat files
 const (
 	CSV FileFormat = 0 + iota
 	CSVWithNames
@@ -530,57 +542,6 @@ func InsertSql(table string, qry string) (err error) {
 	return nil
 }
 
-// Export exports data from Input to a CSV file
-func Export1(rdr Input, nTarget int, separator rune) (err error) {
-	// TODO: see if pre-converting to string makes this faster
-	const newLine = '\n'
-
-	fmt.Println("start reading", time.Now())
-	data, err := rdr.Read(nTarget, true)
-	if err == io.EOF {
-		err = nil
-	}
-	if err != nil {
-		return
-	}
-	_ = os.Remove("/home/will/tmp/try.file")
-	f, err := os.Create("/home/will/tmp/try.file")
-	if err != nil {
-		return
-	}
-	_ = f.Close()
-	fmt.Println("start writing", time.Now())
-	file, err := os.OpenFile("/home/will/tmp/try.file", os.O_RDWR, 0644)
-	defer file.Close()
-	if err != nil {
-		return
-	}
-	for r := 0; r < len(data); r++ {
-		for c := 0; c < len(data[r]); c++ {
-			char := separator
-			if c == len(data[r])-1 {
-				char = newLine
-			}
-			switch v := data[r][c].(type) {
-			case string:
-				_, err = file.WriteString(fmt.Sprintf("'%s'%s", v, string(char)))
-			case time.Time:
-				//a := fmt.Sprintf("%s%s", v.Format("2006-01-02"), string(char))
-				//fmt.Println(a)
-				_, err = file.WriteString(fmt.Sprintf("%s%s", v.Format("2006-01-02"), string(char)))
-			default:
-				_, err = file.WriteString(fmt.Sprintf("%v%s", v, string(char)))
-
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
-	fmt.Println("done writing", time.Now())
-	return nil
-}
-
 func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) {
 	const newLine = "\n"
 
@@ -603,6 +564,7 @@ func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) 
 	for r := 0; nTarget == 0 || (nTarget > 0 && r < nTarget); r++ {
 
 		if data, err = rdr.Read(1, true); err != nil {
+			// no need to report EOF
 			if err == io.EOF {
 				err = nil
 			}
@@ -632,7 +594,67 @@ func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) 
 			}
 		}
 	}
-
 	fmt.Println("done writing", time.Now())
 	return nil
+}
+
+type Connect struct {
+	Host     string
+	User     string
+	Password string
+}
+
+// Load reads n lines from rdr and inserts them into table.
+// tmpFile is a temporary file created to do bulk copy into ClickHouse
+func Load(rdr Input, table string, n int, tmpFile string, con Connect) (err error) {
+	err = Export(rdr, n, '|', tmpFile)
+	if err != nil {
+		return
+	}
+	err = InsertFile(table, tmpFile, '|', CSV, "", con.Host, con.User,
+		con.Password)
+	os.Remove(tmpFile)
+	return
+}
+
+// Loads a ClickHouse table from an array of Inputs concurrently
+func Concur(nChan int, rdrs []Input, table string, tmpRoot string, con Connect) (err error) {
+	err = nil
+	if nChan == 0 {
+		nChan = runtime.NumCPU()
+	}
+	nReaders := len(rdrs)
+	c := make(chan error, nChan)
+	nObs, err := rdrs[0].CountLines()
+	if err != nil {
+		return
+	}
+	nper := int(nObs / nReaders)
+	start := 1
+	for j := 0; j < nReaders; j++ {
+		if err = rdrs[j].Seek(start); err != nil {
+			return
+		}
+		start += nper
+	}
+	for j := 0; j < nReaders; j++ {
+		rand.Seed(time.Now().UnixMicro())
+		tmpFile := fmt.Sprintf("%s/tmp%d.csv", tmpRoot, rand.Int31())
+		num := nper
+		if j == nReaders-1 {
+			num = 0
+		}
+		j := j // Required since the function below is a closure
+		go func() {
+			c <- Load(rdrs[j], table, num, tmpFile, con)
+			return
+		}()
+	}
+	for j := 0; j < nReaders; j++ {
+		e := <-c
+		if e != nil {
+			return e
+		}
+	}
+	return
 }
