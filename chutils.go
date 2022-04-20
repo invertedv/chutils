@@ -1,3 +1,10 @@
+// Package chutils is a set of utilities designed to work with ClickHouse.
+// The package supports:
+//   - Importing data.
+//   - Building and issuing the CREATE TABLE statement.
+//   - QA that checks field
+//   - User-supplied function that can calculate the field if it fails QA
+//   - Concurrent execution of table loading
 package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON? yes? no?
@@ -16,25 +23,16 @@ import (
 	"time"
 )
 
-type Reader struct {
-	Skip      int       // Skip is the # of rows to skip in the file
-	RowsRead  int       // Rowsread is current count of rows read from the file
-	TableSpec *TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
-}
-
-type Loader struct {
-	*Reader
-}
-
-// Input is the interface for reading source data (file, flat file, query)
+// The Input interface specifies the requirments for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
 	Reset()                                                  // Resets to beginning of table
 	Close()                                                  // Closes file (for file-based sources)
-	CountLines() (numLines int, err error)
-	Seek(lineNo int) (err error)
+	CountLines() (numLines int, err error)                   // Returns # of lines in source data
+	Seek(lineNo int) (err error)                             // Moves to lineNo in source data
 }
 
+// InputError is the error handler
 type InputError struct {
 	Err string
 }
@@ -43,6 +41,7 @@ func (e *InputError) Error() string {
 	return e.Err
 }
 
+// EngineType is the enum for ClickHouse engine types
 type EngineType int
 
 const (
@@ -52,7 +51,7 @@ const (
 
 //go:generate stringer -type=EngineType
 
-// ChType enum is supported ClickHouse types.
+// ChType enum is supported ClickHouse field types.
 type ChType int
 
 //ClickHouse base types supported
@@ -65,16 +64,14 @@ const (
 	Date                          // Date: ClickHouse type is Date
 )
 
-// interface with a read/load methods to pull data from A and load to B
-
 //go:generate stringer -type=ChType
 
-// ChField struc holds a ClickHouse field type
+// ChField struct holds the specification for a ClickHouse field
 type ChField struct {
-	Base       ChType // Base: base type of ClickHouse field
-	Length     int    // Length: length of field (0 for String)
-	OuterFunc  string // OuterFunc: Outer function applied (e.g. LowCardinality())
-	DateFormat string // Format for input dates
+	Base       ChType // Base is base type of ClickHouse field.
+	Length     int    // Length is length of field (0 for String).
+	OuterFunc  string // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
+	DateFormat string // Format for incoming dates from Input when dates come in as string.
 }
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
@@ -128,11 +125,11 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 
 // LegalValues holds bounds and lists of legal values for a field
 type LegalValues struct {
-	LowLimit  interface{} // Minimum legal value for Int, Float
-	HighLimit interface{} // Maximum legal value for Int, Float
-	FirstDate *time.Time
-	LastDate  *time.Time
-	Levels    *map[string]int // Legal values for String, FixedString
+	LowLimit  interface{}     // Minimum legal value for types Int, Float
+	HighLimit interface{}     // Maximum legal value for types Int, Float
+	FirstDate *time.Time      // Earliest legal date for Date
+	LastDate  *time.Time      // Last legal date for type Date
+	Levels    *map[string]int // Legal values for types String, FixedString
 }
 
 // NewLegalValues creates a new LegalValues type
@@ -177,7 +174,7 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 		if l.FirstDate == nil || l.LastDate == nil {
 			return
 		}
-		if val.Sub(*l.FirstDate).Hours() >= 0 && (*l).LastDate.Sub(val) >= 0 {
+		if val.Sub(*l.FirstDate) >= 0 && (*l).LastDate.Sub(val) >= 0 {
 			return
 		}
 	}
@@ -185,17 +182,17 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 	return
 }
 
-// Update takes a LegalValues struc and updates it with newVal
-// If it's a int/float field, it will update High/Low.
-// If it's a descrete field, it will add (if needed) the field to the map and update the count
+// Update takes a LegalValues struct and updates it with newVal value.
+// If the target is an int/float field, it will update High/Low.
+// If the target is a discrete field, it will add (if needed) the field to the map and update its count.
 func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
-	// if target != Unknown, this will force the type indicated by target
 
+	// if target != Unknown, this will force the type indicated by target
 	res = target.Base
 
-	// Figure out what this newVal might be
+	// Figure out what type this newVal might be.
+	// The order of assessing this is: Date, Int, Float, String
 	if res == Unknown {
-		// order of assigning: Date, Int, Float, String
 		// LowLimit, HighLimit are float64. Converted to int later (if need be)
 		res = String
 		// float ?
@@ -210,6 +207,7 @@ func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 			res = Date
 		}
 	}
+	// Now update the legal values
 	switch res {
 	case Int, Float:
 		v, err := strconv.ParseFloat(newVal, 64)
@@ -266,11 +264,11 @@ func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 	return
 }
 
-// A Row is a slice of any values. It is a single row of the table
-// This is in the same order of the TableDef FieldDefs slice
+// A Row is single row of the table.  The fields may be of any type.
+// A Row is stored in the same order of the TableDef FieldDefs slice.
 type Row []interface{}
 
-// Status is the validation status of a particular instance of a ChField
+// Status enum is the validation status of a particular instance of a ChField field
 // as judged against its ClickHouse type and acceptable values
 type Status int
 
@@ -285,20 +283,18 @@ const (
 
 //go:generate stringer -type=Status
 
-// TODO: change to *ChField?
-
-// FieldDef struct holds the definition of single ClickHouse field
+// FieldDef struct holds the full definition of single ClickHouse field.
 type FieldDef struct {
-	Name        string                   // Name of field
-	ChSpec      ChField                  // ChSpec is the Clickhouse specification of field
-	Description string                   // Description is an optional description for CREATE TABLE
-	Legal       *LegalValues             // Legal are optional bounds/list of legal values
-	Missing     interface{}              // Missing is the value used for a field if the value is missing/illegal
-	Calculator  func(fs Row) interface{} // Calculator is an optional function to calculate the field
-	Width       int                      // width of field (for flat files)
+	Name        string                   // Name of the field.
+	ChSpec      ChField                  // ChSpec is the Clickhouse specification of field.
+	Description string                   // Description is an optional description for CREATE TABLE statement.
+	Legal       *LegalValues             // Legal are optional bounds/list of legal values.
+	Missing     interface{}              // Missing is the value used for a field if the value is missing/illegal.
+	Calculator  func(fs Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
+	Width       int                      // Width of field (for flat files)
 }
 
-// Validator method to check the Value of Field is legal
+// Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue interface{}, status Status) {
 	status = Pass
@@ -330,16 +326,16 @@ func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue in
 	return
 }
 
-// TableDef defines a table
+// TableDef struct defines a table.
 type TableDef struct {
-	Name   string
-	Key    string
-	Engine EngineType
-	//key is column ordering of table
-	FieldDefs map[int]*FieldDef
+	Name      string            // Name is the ClickHouse name of the table.
+	Key       string            // Key is the key for the table.
+	Engine    EngineType        // EngineType is the ClickHouse table engine.
+	FieldDefs map[int]*FieldDef // Map of fields in the table. The int key is the column order in the table.
 }
 
 // Get returns the FieldDef for field "name", nil if there is not such a field.
+// Since the map is by column order, this is handy to get the field by name.
 func (td *TableDef) Get(name string) *FieldDef {
 	for _, fdx := range td.FieldDefs {
 		if fdx.Name == name {
@@ -349,7 +345,9 @@ func (td *TableDef) Get(name string) *FieldDef {
 	return nil
 }
 
+// FindFormat determines the date format for a date represented as a string.
 func FindFormat(inDate string) (format string, date time.Time, err error) {
+	// formats slice is the formats to try.
 	var formats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
 		"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601"}
 
@@ -363,9 +361,13 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 	return
 }
 
-// TODO: change this to stream
-// Impute looks at the data and builds the FieldDefs
+// TODO: Is this correct?
+
+// Impute looks at the data from Input and builds the FieldDefs.
+// It requires each field in rdr to come in as string.
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) (err error) {
+	err = nil
+	defer rdr.Reset()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
 		floats int
@@ -379,19 +381,29 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 		counts = append(counts, ct)
 	}
 	numFields := len(td.FieldDefs)
-	// now look at RowsToExamine rows to see what types we have
-	data, err := rdr.Read(rowsToExamine, false)
-	if err == io.EOF {
-		err = nil
-	}
-	if err != nil {
-		return
-	}
 
+	// Look at RowsToExamine rows to see what types we have.
 	rowCount := 0
-	for rowCount = 0; rowCount < len(data); rowCount++ {
-		for ind := 0; ind < len(data[rowCount]); ind++ {
-			fval := fmt.Sprintf("%s", data[rowCount][ind])
+	for rowCount = 0; (rowCount < rowsToExamine) || rowsToExamine == 0; rowCount++ {
+		data, errx := rdr.Read(1, false)
+		if rowCount > 10000 {
+			fmt.Println(rowCount)
+		}
+		if errx == io.EOF {
+			break
+		}
+		if errx != nil {
+			return errx
+		}
+		for ind := 0; ind < len(data[0]); ind++ {
+			var (
+				fval string
+				ok   bool
+			)
+			if fval, ok = data[0][ind].(string); ok != true {
+				err = &InputError{Err: fmt.Sprintf("Input field %s is not type string", td.Name)}
+				return
+			}
 			switch counts[ind].legal.Update(fval, &td.FieldDefs[ind].ChSpec) {
 			case Int:
 				counts[ind].ints++
@@ -402,8 +414,10 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 			}
 		}
 	}
-	// threshold to determine which type a field is (100*tol % agreement)
+	// Threshold to determine which type a field is (100*tol % agreement)
 	thresh := int(math.Max(1.0, tol*float64(rowCount)))
+
+	// Select field type.
 	for ind := 0; ind < numFields; ind++ {
 		fd := td.FieldDefs[ind]
 		// only impute type if user has not specified it
@@ -423,7 +437,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				td.FieldDefs[ind].Missing = math.MaxFloat32
 			default:
 				fd.ChSpec.Base = String
-				fd.Missing = "Missing"
+				fd.Missing = "!"
 			}
 		}
 		switch fd.ChSpec.Base {
@@ -450,7 +464,6 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 			}
 		}
 	}
-	rdr.Reset()
 	return nil
 }
 
@@ -465,21 +478,30 @@ func (td *TableDef) Create(db *sql.DB) (err error) {
 	qry = fmt.Sprintf("CREATE TABLE %v (", td.Name)
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
 		fd := td.FieldDefs[ind]
-		ftype := fmt.Sprintf("%s     %v", fd.Name, fd.ChSpec.Base)
+		// start by creating the ClickHouse type
+		ftype := fmt.Sprintf("%v", fd.ChSpec.Base)
 		switch fd.ChSpec.Base {
 		case Int, Float:
 			ftype = fmt.Sprintf("%s%d", ftype, fd.ChSpec.Length)
 		case FixedString:
 			ftype = fmt.Sprintf("%s(%d)", ftype, fd.ChSpec.Length)
 		}
+		if fd.ChSpec.OuterFunc != "" {
+			ftype = fmt.Sprintf("%s(%s)", fd.ChSpec.OuterFunc, ftype)
+		}
+		// Prepend field name.
+		ftype = fmt.Sprintf("%s     %s", fd.Name, ftype)
+		// add comment
 		if fd.Description != "" {
 			ftype = fmt.Sprintf("%s     comment '%s'", ftype, fd.Description)
 		}
+		// Determine trailing character.
 		char := ","
 		if ind == len(td.FieldDefs)-1 {
 			char = ")"
 		}
 		ftype = fmt.Sprintf("%s%s\n", ftype, char)
+		// Add to create query.
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
@@ -529,6 +551,7 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 	if password != "" {
 		cmd = fmt.Sprintf("%s --password=%s", cmd, password)
 	}
+	cmd = fmt.Sprintf("%s %s ", cmd, options)
 	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(delim))
 	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, tablename, format, filename)
 	// running clickhouse-client as a command chokes on --query
@@ -538,9 +561,10 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 }
 
 //TODO think about how to load from a query
-func InsertSql(table string, qry string) (err error) {
-	return nil
-}
+
+//func InsertSql(table string, qry string) (err error) {
+//	return nil
+//}
 
 func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) {
 	const newLine = "\n"
@@ -556,7 +580,7 @@ func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) 
 	_ = f.Close()
 	fmt.Println("start writing", time.Now())
 	file, err := os.OpenFile(outFile, os.O_RDWR, 0644)
-	defer file.Close()
+	defer rdr.Close()
 	if err != nil {
 		return
 	}
@@ -613,11 +637,11 @@ func Load(rdr Input, table string, n int, tmpFile string, con Connect) (err erro
 	}
 	err = InsertFile(table, tmpFile, '|', CSV, "", con.Host, con.User,
 		con.Password)
-	os.Remove(tmpFile)
+	err = os.Remove(tmpFile)
 	return
 }
 
-// Loads a ClickHouse table from an array of Inputs concurrently
+// Concur loads a ClickHouse table from an array of Inputs concurrently
 func Concur(nChan int, rdrs []Input, table string, tmpRoot string, con Connect) (err error) {
 	err = nil
 	if nChan == 0 {
@@ -629,7 +653,7 @@ func Concur(nChan int, rdrs []Input, table string, tmpRoot string, con Connect) 
 	if err != nil {
 		return
 	}
-	nper := int(nObs / nReaders)
+	nper := nObs / nReaders
 	start := 1
 	for j := 0; j < nReaders; j++ {
 		if err = rdrs[j].Seek(start); err != nil {

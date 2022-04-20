@@ -1,4 +1,4 @@
-// file package handles creating readers for files
+// Package file handles creating readers for files
 package file
 
 import (
@@ -12,12 +12,13 @@ import (
 
 // Reader is a reader compatible with chutils
 type Reader struct {
-	Separator  string            // Separator between fields in the file
+	Separator  rune              // Separator between fields in the file
 	Skip       int               // Skip is the # of rows to skip in the file
 	RowsRead   int               // Rowsread is current count of rows read from the file
 	TableSpec  *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
-	EOL        byte              // EOL is the end of line character
+	EOL        rune              // EOL is the end of line character
 	Width      int               // Line width for flat files
+	Quote      rune              // Optional quote around strings that contain the Separator
 	rdr        *bufio.Reader     // rdr is encoding/file package reader
 	filename   string            // file we are reading from
 	fileHandle *os.File          // fileHandle to the file
@@ -25,7 +26,7 @@ type Reader struct {
 }
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator string, eol byte, width int) (*Reader, error) {
+func NewReader(filename string, separator rune, eol rune, quote rune, width int) (*Reader, error) {
 	file, err := os.Open(filename)
 
 	if err != nil {
@@ -39,6 +40,7 @@ func NewReader(filename string, separator string, eol byte, width int) (*Reader,
 		TableSpec:  &chutils.TableDef{},
 		EOL:        eol,
 		Width:      width,
+		Quote:      quote,
 		rdr:        r,
 		filename:   filename,
 		fileHandle: file,
@@ -46,25 +48,24 @@ func NewReader(filename string, separator string, eol byte, width int) (*Reader,
 }
 
 func (csvr *Reader) Close() {
-	csvr.fileHandle.Close()
+	_ = csvr.fileHandle.Close()
 }
 
 // Reset sets the file pointer to the start of the file
 func (csvr *Reader) Reset() {
-	csvr.fileHandle.Seek(0, 0)
+	_, _ = csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
-	//	csvr.rdr = file.NewReader(csvr.fileHandle)
-	//	csvr.rdr.Comma = csvr.Separator
 	csvr.RowsRead = 0
 	return
 }
 
 func (csvr *Reader) Seek(lineNo int) (err error) {
 
-	csvr.fileHandle.Seek(0, 0)
+	_, _ = csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
-		if _, err = csvr.rdr.ReadString(csvr.EOL); err != nil {
+		if _, err = csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
 			return
 		}
 	}
@@ -72,14 +73,14 @@ func (csvr *Reader) Seek(lineNo int) (err error) {
 }
 
 func (csvr *Reader) CountLines() (numLines int, err error) {
-	csvr.fileHandle.Seek(0, 0)
+	_, _ = csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
 	defer csvr.Reset()
 
 	numLines = 0
 	err = nil
 	for e := error(nil); e != io.EOF; {
-		if _, e = csvr.rdr.ReadString(csvr.EOL); e != nil {
+		if _, e = csvr.rdr.ReadString(byte(csvr.EOL)); e != nil {
 			if e != io.EOF {
 				err = e
 			}
@@ -93,7 +94,7 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 
 func (csvr *Reader) Init() (err error) {
 	if csvr.RowsRead != 0 {
-		return &chutils.InputError{"Cannot call BuildTableD after lines have been read"}
+		return &chutils.InputError{Err: "Cannot call BuildTableD after lines have been read"}
 	}
 	row, err := csvr.GetLine()
 	if err != nil {
@@ -112,21 +113,46 @@ func (csvr *Reader) Init() (err error) {
 		fds[ind] = fd
 	}
 	csvr.TableSpec.FieldDefs = fds
-	// don't think this is needed
-	//	csvr.Reset()
-
 	return
 }
 
 func (csvr *Reader) GetLine() (line []string, err error) {
 	if csvr.Width == 0 {
 		var l string
-		if l, err = csvr.rdr.ReadString(csvr.EOL); err != nil {
+		if l, err = csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
 			return make([]string, 0), err
 		}
-		line = strings.Split(l, csvr.Separator)
+		// No quote string, so just split on Separator.
+		if csvr.Quote == 0 {
+			line = strings.Split(l, string(csvr.Separator))
+			return
+		}
+		// The file is quoted, so scan and don't count any Separator that occurs between the quotes.
+		haveQuote := false
+		f := make([]int32, len(l))
+		ind := 0
+		for _, ch := range l {
+			switch ch {
+			case csvr.EOL:
+				line = append(line, string(f[0:ind]))
+			case csvr.Quote:
+				haveQuote = !haveQuote
+			case csvr.Separator:
+				if haveQuote {
+					f[ind] = ch
+					ind++
+				} else {
+					line = append(line, string(f[0:ind]))
+					ind = 0
+				}
+			default:
+				f[ind] = ch
+				ind++
+			}
+		}
 		return
 	}
+
 	// file has fixed-width structure (flat file)
 	l := make([]byte, csvr.Width)
 	if _, err = io.ReadFull(csvr.rdr, l); err != nil {
@@ -137,7 +163,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	}
 	lstr := string(l)
 	if len(lstr) != csvr.Width {
-		return make([]string, 0), &chutils.InputError{"Wrong width"}
+		return make([]string, 0), &chutils.InputError{Err: "Wrong width"}
 	}
 	line = make([]string, len(csvr.TableSpec.FieldDefs))
 	start := 0
@@ -172,7 +198,7 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		}
 		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
 			errstr := fmt.Sprintf("Row %v has %v fields but need %v", csvr.RowsRead, have, need)
-			err = &chutils.InputError{errstr}
+			err = &chutils.InputError{Err: errstr}
 		}
 		if err != nil {
 			err = &chutils.InputError{Err: fmt.Sprintf("Error reading file, row: %v", rowCount)}
@@ -194,5 +220,4 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 			return
 		}
 	}
-	return
 }
