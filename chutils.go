@@ -8,15 +8,13 @@
 package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON? yes? no?
-//TODO implement outerFunc()
+//TODO: CONSIDER making an Output Interface for (e.g.) Export to use
 
 import (
 	"database/sql"
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
-	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -26,10 +24,17 @@ import (
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
-	Reset()                                                  // Resets to beginning of table
-	Close()                                                  // Closes file (for file-based sources)
-	CountLines() (numLines int, err error)                   // Returns # of lines in source data
-	Seek(lineNo int) (err error)                             // Moves to lineNo in source data
+	Reset()                                                  // Reset to beginning of table
+	Close()                                                  // Close input
+	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source data
+	Seek(lineNo int) (err error)                             // Seek moves to lineNo in source data
+	Name() string                                            // Name of input (file, table, etc)
+}
+
+type Output interface {
+	WriteString(s string) (n int, err error) // Write string to output, n=# bytes written
+	Close() (err error)                      // Close output
+	Name() string                            // Name of output (file, etc)
 }
 
 // InputError is the error handler
@@ -143,7 +148,7 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 	ok = true
 	switch val := checkVal.(type) {
 	case string:
-		if l.Levels == nil {
+		if l.Levels == nil || len(*l.Levels) == 0 {
 			return
 		}
 		// check if this is supposed to be a numeric field.
@@ -225,9 +230,9 @@ func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 		if v < l.LowLimit.(float64) {
 			l.LowLimit = v
 		}
-	case String:
+	case String, FixedString:
 		if l.Levels == nil {
-			res = String
+			//			res = String
 			x := make(map[string]int, 0)
 			l.Levels = &x
 		}
@@ -386,9 +391,6 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 	rowCount := 0
 	for rowCount = 0; (rowCount < rowsToExamine) || rowsToExamine == 0; rowCount++ {
 		data, errx := rdr.Read(1, false)
-		if rowCount > 10000 {
-			fmt.Println(rowCount)
-		}
 		if errx == io.EOF {
 			break
 		}
@@ -566,24 +568,20 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 //	return nil
 //}
 
-func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) {
+func Export(rdr Input, wrtr Output, nTarget int, separator rune) (err error) {
 	const newLine = "\n"
 
 	sep := string(separator)
 	fmt.Println("start reading", time.Now())
 
-	_ = os.Remove(outFile)
-	f, err := os.Create(outFile)
-	if err != nil {
-		return
-	}
-	_ = f.Close()
-	fmt.Println("start writing", time.Now())
-	file, err := os.OpenFile(outFile, os.O_RDWR, 0644)
-	defer rdr.Close()
-	if err != nil {
-		return
-	}
+	/*
+	       file, err := os.Create(outFile)
+	   	if err != nil {
+	   		return
+	   	}
+	   	defer file.Close()
+
+	*/
 	var data []Row
 	for r := 0; nTarget == 0 || (nTarget > 0 && r < nTarget); r++ {
 
@@ -605,13 +603,11 @@ func Export(rdr Input, nTarget int, separator rune, outFile string) (err error) 
 			}
 			switch v := data[0][c].(type) {
 			case string:
-				_, err = file.WriteString(fmt.Sprintf("'%s'%s", v, char))
+				_, err = wrtr.WriteString(fmt.Sprintf("'%s'%s", v, char))
 			case time.Time:
-				//a := fmt.Sprintf("%s%s", v.Format("2006-01-02"), string(char))
-				//fmt.Println(a)
-				_, err = file.WriteString(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))
+				_, err = wrtr.WriteString(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))
 			default:
-				_, err = file.WriteString(fmt.Sprintf("%v%s", v, char))
+				_, err = wrtr.WriteString(fmt.Sprintf("%v%s", v, char))
 			}
 			if err != nil {
 				return
@@ -630,55 +626,70 @@ type Connect struct {
 
 // Load reads n lines from rdr and inserts them into table.
 // tmpFile is a temporary file created to do bulk copy into ClickHouse
-func Load(rdr Input, table string, n int, tmpFile string, con Connect) (err error) {
-	err = Export(rdr, n, '|', tmpFile)
+func Load(rdr Input, wrtr Output, table string, n int, con Connect) (err error) {
+	err = Export(rdr, wrtr, n, '|')
 	if err != nil {
 		return
 	}
-	err = InsertFile(table, tmpFile, '|', CSV, "", con.Host, con.User,
+	err = InsertFile(table, wrtr.Name(), '|', CSV, "", con.Host, con.User,
 		con.Password)
-	err = os.Remove(tmpFile)
 	return
 }
 
 // Concur loads a ClickHouse table from an array of Inputs concurrently
-func Concur(nChan int, rdrs []Input, table string, tmpRoot string, con Connect) (err error) {
+func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, tmpRoot string, con Connect) (err error) {
 	err = nil
-	if nChan == 0 {
-		nChan = runtime.NumCPU()
+	if nWorker == 0 {
+		nWorker = runtime.NumCPU()
 	}
-	nReaders := len(rdrs)
-	c := make(chan error, nChan)
+	// TODO: add an error for this
+	if len(rdrs) != len(wrtrs) {
+		return
+	}
+	queueLen := len(rdrs)
+	if nWorker > queueLen {
+		nWorker = queueLen
+	}
+	c := make(chan error)
 	nObs, err := rdrs[0].CountLines()
 	if err != nil {
 		return
 	}
-	nper := nObs / nReaders
+	nper := nObs / queueLen
 	start := 1
-	for j := 0; j < nReaders; j++ {
+	for j := 0; j < queueLen; j++ {
 		if err = rdrs[j].Seek(start); err != nil {
 			return
 		}
 		start += nper
 	}
-	for j := 0; j < nReaders; j++ {
-		rand.Seed(time.Now().UnixMicro())
-		tmpFile := fmt.Sprintf("%s/tmp%d.csv", tmpRoot, rand.Int31())
+	running := 0
+	for ind := 0; ind < queueLen; ind++ {
 		num := nper
-		if j == nReaders-1 {
+		if ind == queueLen-1 {
 			num = 0
 		}
-		j := j // Required since the function below is a closure
+		ind := ind // Required since the function below is a closure
 		go func() {
-			c <- Load(rdrs[j], table, num, tmpFile, con)
+			c <- Load(rdrs[ind], wrtrs[ind], table, num, con)
 			return
 		}()
+		running++
+		if running == nWorker {
+			e := <-c
+			if e != nil {
+				return
+			}
+			running--
+		}
 	}
-	for j := 0; j < nReaders; j++ {
+	// Wait for queue to empty
+	for running > 0 {
 		e := <-c
 		if e != nil {
 			return e
 		}
+		running--
 	}
 	return
 }

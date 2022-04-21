@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -21,18 +20,16 @@ type Reader struct {
 	Quote      rune              // Optional quote around strings that contain the Separator
 	rdr        *bufio.Reader     // rdr is encoding/file package reader
 	filename   string            // file we are reading from
-	fileHandle *os.File          // fileHandle to the file
-
+	fileHandle io.ReadSeekCloser
 }
 
-// NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune, eol rune, quote rune, width int) (*Reader, error) {
-	file, err := os.Open(filename)
+//TODO: consider making this a io.ReadSeeker w/o close.
+//TODO: consider do I need filename?
 
-	if err != nil {
-		return nil, err
-	}
-	r := bufio.NewReader(file)
+// NewReader initializes an instance of Reader
+func NewReader(filename string, separator rune, eol rune, quote rune, width int, rws io.ReadSeekCloser) (*Reader, error) {
+	r := bufio.NewReader(rws)
+
 	return &Reader{
 		Separator:  separator,
 		Skip:       0,
@@ -43,8 +40,12 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int)
 		Quote:      quote,
 		rdr:        r,
 		filename:   filename,
-		fileHandle: file,
+		fileHandle: rws,
 	}, nil
+}
+
+func (csvr *Reader) Name() string {
+	return csvr.filename
 }
 
 func (csvr *Reader) Close() {
