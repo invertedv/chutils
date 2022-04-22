@@ -8,7 +8,8 @@
 package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON? yes? no?
-//TODO: CONSIDER making an Output Interface for (e.g.) Export to use
+
+//TODO: consider eliminating Close in interface input
 
 import (
 	"database/sql"
@@ -21,11 +22,21 @@ import (
 	"time"
 )
 
+// Missing values used when the user does not supply them
+var (
+	DateMissing  = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
+	IntMissing   = math.MaxInt32
+	FloatMissing = math.MaxFloat64
+)
+
+// DateFormats are formats to try when guessing the format
+var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
+	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601"}
+
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
 	Reset()                                                  // Reset to beginning of table
-	Close()                                                  // Close input
 	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source data
 	Seek(lineNo int) (err error)                             // Seek moves to lineNo in source data
 	Name() string                                            // Name of input (file, table, etc)
@@ -33,17 +44,63 @@ type Input interface {
 
 type Output interface {
 	WriteString(s string) (n int, err error) // Write string to output, n=# bytes written
-	Close() (err error)                      // Close output
 	Name() string                            // Name of output (file, etc)
 }
 
-// InputError is the error handler
-type InputError struct {
+type Connect struct {
+	Host     string
+	User     string
+	Password string
+}
+
+type ErrType int
+
+const (
+	ErrUnknown ErrType = 0 + iota
+	ErrInput
+	ErrOutput
+	ErrFields
+	ErrFieldCount
+	ErrDateFormat
+	ErrSeek
+	ErrRWNum
+	ErrStr
+)
+
+//go:generate stringer -type=ErrType
+
+// ChErr is the error handler for error messages
+type ChErr struct {
 	Err string
 }
 
-func (e *InputError) Error() string {
+func (e *ChErr) Error() string {
 	return e.Err
+}
+
+func NewChErr(base ErrType, p ...any) *ChErr {
+	var errstr string
+	switch base {
+	case ErrInput:
+		errstr = fmt.Sprintf("input error row %v", p[0])
+	case ErrOutput:
+		errstr = fmt.Sprintf("output error row %v", p[0])
+	case ErrFieldCount:
+		errstr = fmt.Sprintf("expected %v fields got %v field", p[0], p[1])
+	case ErrSeek:
+		errstr = fmt.Sprintf("error seeking row %v", p[0])
+	case ErrDateFormat:
+		errstr = fmt.Sprintf("unable to find a date format for %v", p[0])
+	case ErrRWNum:
+		errstr = fmt.Sprintf("%v inputs != %v outputs", p[0], p[1])
+	case ErrStr:
+		errstr = fmt.Sprintf("field %v is not type string", p[0])
+	case ErrFields:
+		errstr = fmt.Sprintf("fields: %v", p[0])
+	default:
+		errstr = "Unknown error"
+	}
+	return &ChErr{errstr}
 }
 
 // EngineType is the enum for ClickHouse engine types
@@ -352,26 +409,19 @@ func (td *TableDef) Get(name string) *FieldDef {
 
 // FindFormat determines the date format for a date represented as a string.
 func FindFormat(inDate string) (format string, date time.Time, err error) {
-	// formats slice is the formats to try.
-	var formats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
-		"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601"}
-
 	format = ""
-	for _, format = range formats {
+	for _, format = range DateFormats {
 		date, err = time.Parse(format, inDate)
 		if err == nil {
 			return
 		}
 	}
-	return
+	return "", DateMissing, NewChErr(ErrDateFormat, inDate)
 }
-
-// TODO: Is this correct?
 
 // Impute looks at the data from Input and builds the FieldDefs.
 // It requires each field in rdr to come in as string.
-func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) (err error) {
-	err = nil
+func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) error {
 	defer rdr.Reset()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
@@ -391,11 +441,12 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 	rowCount := 0
 	for rowCount = 0; (rowCount < rowsToExamine) || rowsToExamine == 0; rowCount++ {
 		data, errx := rdr.Read(1, false)
+		// EOF is not an error -- just stop reading
 		if errx == io.EOF {
 			break
 		}
 		if errx != nil {
-			return errx
+			return NewChErr(ErrInput, rowCount)
 		}
 		for ind := 0; ind < len(data[0]); ind++ {
 			var (
@@ -403,8 +454,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				ok   bool
 			)
 			if fval, ok = data[0][ind].(string); ok != true {
-				err = &InputError{Err: fmt.Sprintf("Input field %s is not type string", td.Name)}
-				return
+				return NewChErr(ErrStr, td.Name)
 			}
 			switch counts[ind].legal.Update(fval, &td.FieldDefs[ind].ChSpec) {
 			case Int:
@@ -429,14 +479,14 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				fd.ChSpec.Base, fd.ChSpec.Length = Date, 0
 				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
 				fd.Legal.FirstDate, fd.Legal.LastDate = counts[ind].legal.FirstDate, counts[ind].legal.LastDate
-				fd.Missing = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
+				fd.Missing = DateMissing
 			case counts[ind].ints >= thresh:
 				fd.ChSpec.Base, fd.ChSpec.Length = Int, 64
-				fd.Missing = math.MaxInt32
+				fd.Missing = IntMissing
 			case (counts[ind].ints + counts[ind].floats) >= thresh:
 				// Some values may convert to int in the file -- these could also be floats
 				td.FieldDefs[ind].ChSpec.Base, td.FieldDefs[ind].ChSpec.Length = Float, 64
-				td.FieldDefs[ind].Missing = math.MaxFloat32
+				td.FieldDefs[ind].Missing = FloatMissing
 			default:
 				fd.ChSpec.Base = String
 				fd.Missing = "!"
@@ -470,12 +520,11 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 }
 
 // Create func builds and issues CREATE TABLE ClickHouse statement
-func (td *TableDef) Create(db *sql.DB) (err error) {
+func (td *TableDef) Create(db *sql.DB) error {
 	//db should be database object
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", td.Name)
-	_, err = db.Exec(qry)
-	if err != nil {
-		return
+	if _, err := db.Exec(qry); err != nil {
+		return err
 	}
 	qry = fmt.Sprintf("CREATE TABLE %v (", td.Name)
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
@@ -507,14 +556,13 @@ func (td *TableDef) Create(db *sql.DB) (err error) {
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
-	fmt.Println(qry)
-	_, err = db.Exec(qry)
-	return
+	_, err := db.Exec(qry)
+	return err
 }
 
 // InsertData creates and issues a ClickHouse INSERT Statement
 // Should only be used with small amounts of data
-func (td *TableDef) InsertData(t Input, rowCount int, db *sql.DB) (err error) {
+func (td *TableDef) InsertData(t Input, rowCount int, db *sql.DB) error {
 	qry := fmt.Sprintf("INSERT INTO %s VALUES \n", td.Name)
 	data, _ := t.Read(rowCount, true)
 	for r := 0; r < len(data); r++ {
@@ -531,8 +579,8 @@ func (td *TableDef) InsertData(t Input, rowCount int, db *sql.DB) (err error) {
 			qry += fmt.Sprintf("%v %s", v, char)
 		}
 	}
-	_, err = db.Exec(qry)
-	return
+	_, err := db.Exec(qry)
+	return err
 }
 
 // FileFormat enum has supported file types for bulk insert
@@ -548,7 +596,7 @@ const (
 
 // InsertFile uses clickhouse-client to bulk insert a file
 func InsertFile(tablename string, filename string, delim rune, format FileFormat, options string, host string,
-	user string, password string) (err error) {
+	user string, password string) error {
 	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", host, user)
 	if password != "" {
 		cmd = fmt.Sprintf("%s --password=%s", cmd, password)
@@ -558,8 +606,8 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, tablename, format, filename)
 	// running clickhouse-client as a command chokes on --query
 	c := exec.Command("bash", "-c", cmd)
-	err = c.Run()
-	return
+	err := c.Run()
+	return err
 }
 
 //TODO think about how to load from a query
@@ -568,33 +616,24 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 //	return nil
 //}
 
-func Export(rdr Input, wrtr Output, nTarget int, separator rune) (err error) {
+func Export(rdr Input, wrtr Output, nTarget int, separator rune) error {
 	const newLine = "\n"
 
 	sep := string(separator)
 	fmt.Println("start reading", time.Now())
-
-	/*
-	       file, err := os.Create(outFile)
-	   	if err != nil {
-	   		return
-	   	}
-	   	defer file.Close()
-
-	*/
 	var data []Row
+	var err error
 	for r := 0; nTarget == 0 || (nTarget > 0 && r < nTarget); r++ {
 
 		if data, err = rdr.Read(1, true); err != nil {
 			// no need to report EOF
 			if err == io.EOF {
-				err = nil
+				return nil
 			}
 			if err != nil {
-				return
+				return NewChErr(ErrInput, r)
 			}
 			fmt.Println("done writing", time.Now())
-			return
 		}
 		for c := 0; c < len(data[0]); c++ {
 			char := sep
@@ -610,18 +649,12 @@ func Export(rdr Input, wrtr Output, nTarget int, separator rune) (err error) {
 				_, err = wrtr.WriteString(fmt.Sprintf("%v%s", v, char))
 			}
 			if err != nil {
-				return
+				return NewChErr(ErrOutput, r)
 			}
 		}
 	}
 	fmt.Println("done writing", time.Now())
 	return nil
-}
-
-type Connect struct {
-	Host     string
-	User     string
-	Password string
 }
 
 // Load reads n lines from rdr and inserts them into table.
@@ -637,29 +670,31 @@ func Load(rdr Input, wrtr Output, table string, n int, con Connect) (err error) 
 }
 
 // Concur loads a ClickHouse table from an array of Inputs concurrently
-func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, tmpRoot string, con Connect) (err error) {
-	err = nil
+func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect) error {
+
 	if nWorker == 0 {
 		nWorker = runtime.NumCPU()
 	}
-	// TODO: add an error for this
 	if len(rdrs) != len(wrtrs) {
-		return
+		return NewChErr(ErrRWNum, len(rdrs), len(wrtrs))
 	}
 	queueLen := len(rdrs)
 	if nWorker > queueLen {
 		nWorker = queueLen
 	}
 	c := make(chan error)
+
+	// TODO: don't put this here -- have it outside this as part of the prep -- maybe a function in /file
+
 	nObs, err := rdrs[0].CountLines()
 	if err != nil {
-		return
+		return NewChErr(ErrInput, "Countlines")
 	}
 	nper := nObs / queueLen
 	start := 1
 	for j := 0; j < queueLen; j++ {
 		if err = rdrs[j].Seek(start); err != nil {
-			return
+			return NewChErr(ErrSeek, start)
 		}
 		start += nper
 	}
@@ -678,7 +713,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, tmpRoot str
 		if running == nWorker {
 			e := <-c
 			if e != nil {
-				return
+				return e
 			}
 			running--
 		}
@@ -691,5 +726,5 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, tmpRoot str
 		}
 		running--
 	}
-	return
+	return nil
 }

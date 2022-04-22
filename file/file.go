@@ -3,7 +3,6 @@ package file
 
 import (
 	"bufio"
-	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
 	"strings"
@@ -27,7 +26,7 @@ type Reader struct {
 //TODO: consider do I need filename?
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune, eol rune, quote rune, width int, rws io.ReadSeekCloser) (*Reader, error) {
+func NewReader(filename string, separator rune, eol rune, quote rune, width int, rws io.ReadSeekCloser) *Reader {
 	r := bufio.NewReader(rws)
 
 	return &Reader{
@@ -41,7 +40,7 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 		rdr:        r,
 		filename:   filename,
 		fileHandle: rws,
-	}, nil
+	}
 }
 
 func (csvr *Reader) Name() string {
@@ -60,17 +59,17 @@ func (csvr *Reader) Reset() {
 	return
 }
 
-func (csvr *Reader) Seek(lineNo int) (err error) {
+func (csvr *Reader) Seek(lineNo int) error {
 
 	_, _ = csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
 	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
-		if _, err = csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
-			return
+		if _, err := csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
+			return chutils.NewChErr(chutils.ErrSeek, lineNo)
 		}
 	}
-	return
+	return nil
 }
 
 func (csvr *Reader) CountLines() (numLines int, err error) {
@@ -83,7 +82,7 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 	for e := error(nil); e != io.EOF; {
 		if _, e = csvr.rdr.ReadString(byte(csvr.EOL)); e != nil {
 			if e != io.EOF {
-				err = e
+				return 0, chutils.NewChErr(chutils.ErrInput, "CountLines")
 			}
 			numLines -= csvr.Skip
 			return
@@ -93,13 +92,14 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 	return
 }
 
-func (csvr *Reader) Init() (err error) {
+// Init initialize FieldDefs slice of TableDef from header row of input
+func (csvr *Reader) Init() error {
 	if csvr.RowsRead != 0 {
-		return &chutils.InputError{Err: "Cannot call BuildTableD after lines have been read"}
+		csvr.Reset()
 	}
 	row, err := csvr.GetLine()
 	if err != nil {
-		return err
+		return chutils.NewChErr(chutils.ErrInput, 0)
 	}
 
 	fds := make(map[int]*chutils.FieldDef)
@@ -114,14 +114,15 @@ func (csvr *Reader) Init() (err error) {
 		fds[ind] = fd
 	}
 	csvr.TableSpec.FieldDefs = fds
-	return
+	return nil
 }
 
 func (csvr *Reader) GetLine() (line []string, err error) {
+	err = nil
 	if csvr.Width == 0 {
 		var l string
 		if l, err = csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
-			return make([]string, 0), err
+			return nil, err
 		}
 		// No quote string, so just split on Separator.
 		if csvr.Quote == 0 {
@@ -164,7 +165,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	}
 	lstr := string(l)
 	if len(lstr) != csvr.Width {
-		return make([]string, 0), &chutils.InputError{Err: "Wrong width"}
+		return nil, chutils.NewChErr(chutils.ErrFields, "line is wrong width")
 	}
 	line = make([]string, len(csvr.TableSpec.FieldDefs))
 	start := 0
@@ -182,9 +183,8 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 
 	if csvr.RowsRead == 0 && csvr.Skip > 0 {
 		for i := 0; i < csvr.Skip; i++ {
-			_, err = csvr.GetLine()
-			if err != nil {
-				return
+			if _, err = csvr.GetLine(); err != nil {
+				return nil, chutils.NewChErr(chutils.ErrInput, i)
 			}
 		}
 	}
@@ -193,16 +193,17 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 
 	data = make([]chutils.Row, 0)
 	for rowCount := 1; ; rowCount++ {
-		csvrow, err = csvr.GetLine()
-		if err == io.EOF {
+		if csvrow, err = csvr.GetLine(); err == io.EOF {
 			return
 		}
+		//		if err == io.EOF {
+		//			return
+		//		}
 		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
-			errstr := fmt.Sprintf("Row %v has %v fields but need %v", csvr.RowsRead, have, need)
-			err = &chutils.InputError{Err: errstr}
+			err = chutils.NewChErr(chutils.ErrFieldCount, need, have)
 		}
 		if err != nil {
-			err = &chutils.InputError{Err: fmt.Sprintf("Error reading file, row: %v", rowCount)}
+			err = chutils.NewChErr(chutils.ErrInput, rowCount)
 			return
 		}
 		outrow := make(chutils.Row, 0)
