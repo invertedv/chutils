@@ -3,16 +3,21 @@ package file
 
 import (
 	"bufio"
+	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
+	"math/rand"
+	"os"
 	"strings"
+	"time"
 )
 
-// Reader is a reader compatible with chutils
+// Reader is a Reader that satisfies chutils Input interface. It reads files.
 type Reader struct {
 	Separator  rune              // Separator between fields in the file
 	Skip       int               // Skip is the # of rows to skip in the file
 	RowsRead   int               // Rowsread is current count of rows read from the file
+	MaxRead    int               // Max rows to read
 	TableSpec  *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
 	EOL        rune              // EOL is the end of line character
 	Width      int               // Line width for flat files
@@ -26,13 +31,14 @@ type Reader struct {
 //TODO: consider do I need filename?
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune, eol rune, quote rune, width int, rws io.ReadSeekCloser) *Reader {
+func NewReader(filename string, separator rune, eol rune, quote rune, width int, skip int, maxRead int, rws io.ReadSeekCloser) *Reader {
 	r := bufio.NewReader(rws)
 
 	return &Reader{
 		Separator:  separator,
-		Skip:       0,
+		Skip:       skip,
 		RowsRead:   0,
+		MaxRead:    maxRead,
 		TableSpec:  &chutils.TableDef{},
 		EOL:        eol,
 		Width:      width,
@@ -47,8 +53,8 @@ func (csvr *Reader) Name() string {
 	return csvr.filename
 }
 
-func (csvr *Reader) Close() {
-	_ = csvr.fileHandle.Close()
+func (csvr *Reader) Close() error {
+	return csvr.fileHandle.Close()
 }
 
 // Reset sets the file pointer to the start of the file
@@ -117,6 +123,7 @@ func (csvr *Reader) Init() error {
 	return nil
 }
 
+// GetLine returns the next line from Reader and parses it into fields.
 func (csvr *Reader) GetLine() (line []string, err error) {
 	err = nil
 	if csvr.Width == 0 {
@@ -177,7 +184,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	return
 }
 
-// Read reads rows from the file and do type conversion, validation
+// Read reads numRow rows from, does type conversion and validation (validate==true)
 func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err error) {
 	var csvrow []string
 
@@ -218,8 +225,54 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		}
 		data = append(data, outrow)
 		csvr.RowsRead++
+		if csvr.MaxRead > 0 && csvr.RowsRead > csvr.MaxRead {
+			fmt.Println("Rows read", csvr.RowsRead)
+			err = io.EOF
+			return
+		}
 		if rowCount == numRow && numRow > 0 {
 			return
 		}
 	}
+}
+
+// Divvy generates slices of len nChunks Input/Output by slicing up rdr0 data.  rdr0 is not part of the Input slice.
+func Divvy(rdr0 *Reader, nChunks int, tmpDir string) (r []chutils.Input, w []chutils.Output, err error) {
+
+	r = nil
+	w = nil
+	nObs, err := rdr0.CountLines()
+	if err != nil {
+		return
+	}
+	nper := nObs / nChunks
+	start := 1
+	for ind := 0; ind < nChunks; ind++ {
+		var (
+			fh *os.File
+			a  *os.File
+		)
+		if fh, err = os.Open(rdr0.filename); err != nil {
+			return
+		}
+		np := nper
+		if ind == nChunks-1 {
+			np = 0
+		}
+		x := NewReader(rdr0.filename, rdr0.Separator, rdr0.EOL, rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh)
+		x.TableSpec = rdr0.TableSpec
+		if err = x.Seek(start); err != nil {
+			return
+		}
+		start += nper
+		r = append(r, x)
+
+		rand.Seed(time.Now().UnixMicro())
+		tmpFile := fmt.Sprintf("%s/tmp%d.csv", tmpDir, rand.Int31())
+		if a, err = os.Create(tmpFile); err != nil {
+			return
+		}
+		w = append(w, a)
+	}
+	return
 }

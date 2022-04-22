@@ -38,21 +38,25 @@ type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
 	Reset()                                                  // Reset to beginning of table
 	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source data
-	Seek(lineNo int) (err error)                             // Seek moves to lineNo in source data
+	Seek(lineNo int) error                                   // Seek moves to lineNo in source data
 	Name() string                                            // Name of input (file, table, etc)
+	Close() error                                            // Close the source
 }
 
 type Output interface {
 	WriteString(s string) (n int, err error) // Write string to output, n=# bytes written
 	Name() string                            // Name of output (file, etc)
+	Close() error                            // Close the source
 }
 
+// Connect holds the ClickHouse connect information
 type Connect struct {
 	Host     string
 	User     string
 	Password string
 }
 
+// ErrType enum specifies the different error types trapped
 type ErrType int
 
 const (
@@ -78,6 +82,7 @@ func (e *ChErr) Error() string {
 	return e.Err
 }
 
+// NewChErr returns an error type. Debugging problems in input files is tedious -- so supply extra info where possible.
 func NewChErr(base ErrType, p ...any) *ChErr {
 	var errstr string
 	switch base {
@@ -595,11 +600,11 @@ const (
 //go:generate stringer -type=FileFormat
 
 // InsertFile uses clickhouse-client to bulk insert a file
-func InsertFile(tablename string, filename string, delim rune, format FileFormat, options string, host string,
-	user string, password string) error {
-	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", host, user)
-	if password != "" {
-		cmd = fmt.Sprintf("%s --password=%s", cmd, password)
+func InsertFile(tablename string, filename string, delim rune, format FileFormat, options string, con Connect) error {
+
+	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", con.Host, con.User)
+	if con.Password != "" {
+		cmd = fmt.Sprintf("%s --password=%s", cmd, con.Password)
 	}
 	cmd = fmt.Sprintf("%s %s ", cmd, options)
 	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(delim))
@@ -616,15 +621,14 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 //	return nil
 //}
 
-func Export(rdr Input, wrtr Output, nTarget int, separator rune) error {
+func Export(rdr Input, wrtr Output, separator rune) error {
 	const newLine = "\n"
 
 	sep := string(separator)
 	fmt.Println("start reading", time.Now())
 	var data []Row
 	var err error
-	for r := 0; nTarget == 0 || (nTarget > 0 && r < nTarget); r++ {
-
+	for r := 0; ; r++ {
 		if data, err = rdr.Read(1, true); err != nil {
 			// no need to report EOF
 			if err == io.EOF {
@@ -653,19 +657,16 @@ func Export(rdr Input, wrtr Output, nTarget int, separator rune) error {
 			}
 		}
 	}
-	fmt.Println("done writing", time.Now())
-	return nil
 }
 
 // Load reads n lines from rdr and inserts them into table.
 // tmpFile is a temporary file created to do bulk copy into ClickHouse
-func Load(rdr Input, wrtr Output, table string, n int, con Connect) (err error) {
-	err = Export(rdr, wrtr, n, '|')
+func Load(rdr Input, wrtr Output, table string, con Connect) (err error) {
+	err = Export(rdr, wrtr, '|')
 	if err != nil {
 		return
 	}
-	err = InsertFile(table, wrtr.Name(), '|', CSV, "", con.Host, con.User,
-		con.Password)
+	err = InsertFile(table, wrtr.Name(), '|', CSV, "", con)
 	return
 }
 
@@ -684,29 +685,11 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect
 	}
 	c := make(chan error)
 
-	// TODO: don't put this here -- have it outside this as part of the prep -- maybe a function in /file
-
-	nObs, err := rdrs[0].CountLines()
-	if err != nil {
-		return NewChErr(ErrInput, "Countlines")
-	}
-	nper := nObs / queueLen
-	start := 1
-	for j := 0; j < queueLen; j++ {
-		if err = rdrs[j].Seek(start); err != nil {
-			return NewChErr(ErrSeek, start)
-		}
-		start += nper
-	}
 	running := 0
 	for ind := 0; ind < queueLen; ind++ {
-		num := nper
-		if ind == queueLen-1 {
-			num = 0
-		}
 		ind := ind // Required since the function below is a closure
 		go func() {
-			c <- Load(rdrs[ind], wrtrs[ind], table, num, con)
+			c <- Load(rdrs[ind], wrtrs[ind], table, con)
 			return
 		}()
 		running++
@@ -726,5 +709,14 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect
 		}
 		running--
 	}
+	for ind := 0; ind < queueLen; ind++ {
+		if err := rdrs[ind].Close(); err != nil {
+			return err
+		}
+		if err := wrtrs[ind].Close(); err != nil {
+			return err
+		}
+	}
+	fmt.Println("Done", time.Now())
 	return nil
 }
