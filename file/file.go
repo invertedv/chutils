@@ -226,7 +226,6 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		data = append(data, outrow)
 		csvr.RowsRead++
 		if csvr.MaxRead > 0 && csvr.RowsRead > csvr.MaxRead {
-			fmt.Println("Rows read", csvr.RowsRead)
 			err = io.EOF
 			return
 		}
