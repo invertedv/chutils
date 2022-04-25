@@ -8,9 +8,13 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
+
+// TODO: rune vs string
+// TODO: make Separator, EOL, Quote methods?
 
 // Reader is a Reader that satisfies chutils Input interface. It reads files.
 type Reader struct {
@@ -236,26 +240,23 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 }
 
 // Divvy generates slices of len nChunks Input/Output by slicing up rdr0 data.  rdr0 is not part of the Input slice.
-func Divvy(rdr0 *Reader, nChunks int, tmpDir string) (r []chutils.Input, w []chutils.Output, err error) {
+func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 
-	r = nil
-	w = nil
+	r = nil //make([]*Reader, 0)
 	nObs, err := rdr0.CountLines()
 	if err != nil {
 		return
 	}
-	nper := nObs / nChunks
+	nper := nObs / nRdrs
 	start := 1
-	for ind := 0; ind < nChunks; ind++ {
-		var (
-			fh *os.File
-			a  *os.File
-		)
+	for ind := 0; ind < nRdrs; ind++ {
+		var fh *os.File
+
 		if fh, err = os.Open(rdr0.filename); err != nil {
 			return
 		}
 		np := nper
-		if ind == nChunks-1 {
+		if ind == nRdrs-1 {
 			np = 0
 		}
 		x := NewReader(rdr0.filename, rdr0.Separator, rdr0.EOL, rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh)
@@ -265,13 +266,78 @@ func Divvy(rdr0 *Reader, nChunks int, tmpDir string) (r []chutils.Input, w []chu
 		}
 		start += nper
 		r = append(r, x)
+	}
+	return
+}
 
-		rand.Seed(time.Now().UnixMicro())
+type Writer struct {
+	file      *os.File
+	separator string
+	eol       string
+	Con       chutils.Connect
+	Table     string
+}
+
+func (w *Writer) Insert() error {
+	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", w.Con.Host, w.Con.User)
+	if w.Con.Password != "" {
+		cmd = fmt.Sprintf("%s --password=%s", cmd, w.Con.Password)
+	}
+	cmd = fmt.Sprintf("%s %s ", cmd, "")
+	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, w.Separator())
+	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, w.Table, "CSV", w.Name())
+	// running clickhouse-client as a command chokes on --query
+	c := exec.Command("bash", "-c", cmd)
+	err := c.Run()
+	return err
+}
+
+func (w *Writer) Close() error {
+	//	return w.file.Close()
+	return nil
+}
+
+func (w *Writer) Name() string {
+	return w.file.Name()
+}
+
+func (w *Writer) EOL() string {
+	return w.eol
+}
+
+func (w *Writer) Separator() string {
+	return w.separator
+}
+
+func (w *Writer) Write(b []byte) (n int, err error) {
+	n, err = w.file.Write(b)
+	return
+}
+
+func NewWriter(f *os.File, con chutils.Connect, separator string, eol string, table string) *Writer {
+	return &Writer{
+		file:      f,
+		Con:       con,
+		separator: separator,
+		eol:       eol,
+		Table:     table,
+	}
+}
+
+func Wrtrs(tmpDir string, nWrtr int, con chutils.Connect, separator string, eol string, table string) (wrtrs []chutils.Output, err error) {
+	var a *os.File
+	var w *Writer
+
+	wrtrs = nil // make([]*os.File, 0)
+	rand.Seed(time.Now().UnixMicro())
+
+	for ind := 0; ind < nWrtr; ind++ {
 		tmpFile := fmt.Sprintf("%s/tmp%d.csv", tmpDir, rand.Int31())
 		if a, err = os.Create(tmpFile); err != nil {
 			return
 		}
-		w = append(w, a)
+		w = NewWriter(a, con, separator, eol, table)
+		wrtrs = append(wrtrs, w)
 	}
 	return
 }

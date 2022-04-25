@@ -8,8 +8,7 @@
 package chutils
 
 //TODO: add read and write functions to TableDefs -- JSON? yes? no?
-
-//TODO: consider eliminating Close in interface input
+//TODO: add another slice of FieldDefs that are calculated fields
 
 import (
 	"database/sql"
@@ -25,8 +24,8 @@ import (
 // Missing values used when the user does not supply them
 var (
 	DateMissing  = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
-	IntMissing   = math.MaxInt32
-	FloatMissing = math.MaxFloat64
+	IntMissing   = -1   //math.MaxInt32
+	FloatMissing = -1.0 //math.MaxFloat64
 )
 
 // DateFormats are formats to try when guessing the format
@@ -43,10 +42,14 @@ type Input interface {
 	Close() error                                            // Close the source
 }
 
+// The Output interface specifies requirements for writing data.
 type Output interface {
-	WriteString(s string) (n int, err error) // Write string to output, n=# bytes written
-	Name() string                            // Name of output (file, etc)
-	Close() error                            // Close the source
+	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written
+	Name() string                      // Name of output (file, etc)
+	Insert() error                     // Close the source
+	Separator() string
+	EOL() string
+	Close() error
 }
 
 // Connect holds the ClickHouse connect information
@@ -108,7 +111,7 @@ func NewChErr(base ErrType, p ...any) *ChErr {
 	return &ChErr{errstr}
 }
 
-// EngineType is the enum for ClickHouse engine types
+// EngineType enum specifies ClickHouse engine types
 type EngineType int
 
 const (
@@ -121,7 +124,6 @@ const (
 // ChType enum is supported ClickHouse field types.
 type ChType int
 
-//ClickHouse base types supported
 const (
 	Unknown     ChType = 0 + iota // Unknown: ClickHouse type is undetermined
 	Int                           // Int: ClickHouse type is Integer
@@ -190,7 +192,7 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 	return outValue, true
 }
 
-// LegalValues holds bounds and lists of legal values for a field
+// LegalValues holds bounds and lists of legal values for a ClickHouse field
 type LegalValues struct {
 	LowLimit  interface{}     // Minimum legal value for types Int, Float
 	HighLimit interface{}     // Maximum legal value for types Int, Float
@@ -331,7 +333,7 @@ func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
 	return
 }
 
-// A Row is single row of the table.  The fields may be of any type.
+// Row is single row of the table.  The fields may be of any type.
 // A Row is stored in the same order of the TableDef FieldDefs slice.
 type Row []interface{}
 
@@ -600,7 +602,7 @@ const (
 //go:generate stringer -type=FileFormat
 
 // InsertFile uses clickhouse-client to bulk insert a file
-func InsertFile(tablename string, filename string, delim rune, format FileFormat, options string, con Connect) error {
+func xInsertFile(tablename string, filename string, delim rune, format FileFormat, options string, con Connect) error {
 
 	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", con.Host, con.User)
 	if con.Password != "" {
@@ -615,20 +617,18 @@ func InsertFile(tablename string, filename string, delim rune, format FileFormat
 	return err
 }
 
-//TODO think about how to load from a query
+//TODO think about how to load from a query.  Can Export be used???
 
 //func InsertSql(table string, qry string) (err error) {
 //	return nil
 //}
 
-func Export(rdr Input, wrtr Output, separator rune) error {
-	const newLine = "\n"
+// Export transfers the contents of rdr to wrtr.  Typically, wrtr will be a file.
+func Export(rdr Input, wrtr Output, separator string, eol string) error {
 
-	sep := string(separator)
-	fmt.Println("start reading", time.Now())
 	var data []Row
-	var err error
 	for r := 0; ; r++ {
+		var err error
 		if data, err = rdr.Read(1, true); err != nil {
 			// no need to report EOF
 			if err == io.EOF {
@@ -639,40 +639,45 @@ func Export(rdr Input, wrtr Output, separator rune) error {
 			}
 			fmt.Println("done writing", time.Now())
 		}
+		line := make([]byte, 0)
 		for c := 0; c < len(data[0]); c++ {
-			char := sep
+			char := separator
 			if c == len(data[0])-1 {
-				char = newLine
+				char = eol
 			}
 			switch v := data[0][c].(type) {
 			case string:
-				_, err = wrtr.WriteString(fmt.Sprintf("'%s'%s", v, char))
+				line = append(line, []byte(fmt.Sprintf("'%s'%s", v, char))...)
 			case time.Time:
-				_, err = wrtr.WriteString(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))
+				line = append(line, []byte(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))...)
 			default:
-				_, err = wrtr.WriteString(fmt.Sprintf("%v%s", v, char))
+				line = append(line, []byte(fmt.Sprintf("%v%s", v, char))...)
 			}
-			if err != nil {
-				return NewChErr(ErrOutput, r)
-			}
+		}
+		if _, err = wrtr.Write(line); err != nil {
+			return NewChErr(ErrOutput, r)
 		}
 	}
 }
 
-// Load reads n lines from rdr and inserts them into table.
-// tmpFile is a temporary file created to do bulk copy into ClickHouse
-func Load(rdr Input, wrtr Output, table string, con Connect) (err error) {
-	err = Export(rdr, wrtr, '|')
+// TODO: think about whether to generalize this
+
+// Load reads n lines from rdr, writes them to wrtr and finally inserts the data into table.
+func Load(rdr Input, wrtr Output) (err error) {
+	err = Export(rdr, wrtr, wrtr.Separator(), wrtr.EOL())
 	if err != nil {
 		return
 	}
-	err = InsertFile(table, wrtr.Name(), '|', CSV, "", con)
+	err = wrtr.Insert()
+	//	wrtr.Close()
 	return
 }
 
-// Concur loads a ClickHouse table from an array of Inputs concurrently
-func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect) error {
-
+// Concur loads a ClickHouse table from an array of Inputs/Outputs concurrently.
+// wrtrs must produce a file that can be bulk imported to ClickHouse.
+func Concur(nWorker int, rdrs []Input, wrtrs []Output,
+	f func(rdr Input, wrtr Output) error) error {
+	start := time.Now()
 	if nWorker == 0 {
 		nWorker = runtime.NumCPU()
 	}
@@ -689,7 +694,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect
 	for ind := 0; ind < queueLen; ind++ {
 		ind := ind // Required since the function below is a closure
 		go func() {
-			c <- Load(rdrs[ind], wrtrs[ind], table, con)
+			c <- f(rdrs[ind], wrtrs[ind])
 			return
 		}()
 		running++
@@ -713,10 +718,8 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, table string, con Connect
 		if err := rdrs[ind].Close(); err != nil {
 			return err
 		}
-		if err := wrtrs[ind].Close(); err != nil {
-			return err
-		}
 	}
-	fmt.Println("Done", time.Now())
+	elapsed := time.Now().Sub(start)
+	fmt.Println("Elapsed time", elapsed.Seconds(), "seconds")
 	return nil
 }
