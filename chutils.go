@@ -72,6 +72,7 @@ const (
 	ErrSeek
 	ErrRWNum
 	ErrStr
+	ErrSQL
 )
 
 //go:generate stringer -type=ErrType
@@ -105,6 +106,8 @@ func NewChErr(base ErrType, p ...any) *ChErr {
 		errstr = fmt.Sprintf("field %v is not type string", p[0])
 	case ErrFields:
 		errstr = fmt.Sprintf("fields: %v", p[0])
+	case ErrSQL:
+		errstr = "SQL Error"
 	default:
 		errstr = "Unknown error"
 	}
@@ -405,13 +408,13 @@ type TableDef struct {
 
 // Get returns the FieldDef for field "name", nil if there is not such a field.
 // Since the map is by column order, this is handy to get the field by name.
-func (td *TableDef) Get(name string) *FieldDef {
+func (td *TableDef) Get(name string) (*FieldDef, error) {
 	for _, fdx := range td.FieldDefs {
 		if fdx.Name == name {
-			return fdx
+			return fdx, nil
 		}
 	}
-	return nil
+	return nil, NewChErr(ErrFields, name)
 }
 
 // FindFormat determines the date format for a date represented as a string.
