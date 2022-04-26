@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"time"
@@ -46,7 +45,7 @@ type Input interface {
 type Output interface {
 	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written
 	Name() string                      // Name of output (file, etc)
-	Insert() error                     // Close the source
+	Insert() error                     //
 	Separator() string
 	EOL() string
 	Close() error
@@ -57,6 +56,10 @@ type Connect struct {
 	Host     string
 	User     string
 	Password string
+}
+
+func (c Connect) String() string {
+	return fmt.Sprintf("http://%s:8123/?user=%s&password=%s", c.Host, c.User, c.Password)
 }
 
 // ErrType enum specifies the different error types trapped
@@ -103,13 +106,13 @@ func NewChErr(base ErrType, p ...any) *ChErr {
 	case ErrRWNum:
 		errstr = fmt.Sprintf("%v inputs != %v outputs", p[0], p[1])
 	case ErrStr:
-		errstr = fmt.Sprintf("field %v is not type string", p[0])
+		errstr = fmt.Sprintf("field %v, row %v is not type string", p[0], p[1])
 	case ErrFields:
 		errstr = fmt.Sprintf("fields: %v", p[0])
 	case ErrSQL:
-		errstr = "SQL Error"
+		errstr = fmt.Sprintf("SQL Error: %v", p[0])
 	default:
-		errstr = "Unknown error"
+		errstr = "Other error"
 	}
 	return &ChErr{errstr}
 }
@@ -357,18 +360,18 @@ const (
 
 // FieldDef struct holds the full definition of single ClickHouse field.
 type FieldDef struct {
-	Name        string                   // Name of the field.
-	ChSpec      ChField                  // ChSpec is the Clickhouse specification of field.
-	Description string                   // Description is an optional description for CREATE TABLE statement.
-	Legal       *LegalValues             // Legal are optional bounds/list of legal values.
-	Missing     interface{}              // Missing is the value used for a field if the value is missing/illegal.
-	Calculator  func(fs Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
-	Width       int                      // Width of field (for flat files)
+	Name        string                                // Name of the field.
+	ChSpec      ChField                               // ChSpec is the Clickhouse specification of field.
+	Description string                                // Description is an optional description for CREATE TABLE statement.
+	Legal       *LegalValues                          // Legal are optional bounds/list of legal values.
+	Missing     interface{}                           // Missing is the value used for a field if the value is missing/illegal.
+	Calculator  func(td *TableDef, r Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
+	Width       int                                   // Width of field (for flat files)
 }
 
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
-func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue interface{}, status Status) {
+func (fd *FieldDef) Validator(inValue interface{}, td *TableDef, r Row, s Status) (outValue interface{}, status Status) {
 	status = Pass
 	outValue, ok := fd.ChSpec.Converter(inValue)
 	if !ok {
@@ -384,7 +387,7 @@ func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue in
 	}
 	if fd.Calculator != nil && s != Calculated {
 		hold := outValue
-		outValue, status = fd.Validator(fd.Calculator(r), r, Calculated)
+		outValue, status = fd.Validator(fd.Calculator(td, r), td, r, Calculated)
 		// see if estimated value is legal
 		if status == Pass {
 			status = Calculated
@@ -400,7 +403,6 @@ func (fd *FieldDef) Validator(inValue interface{}, r Row, s Status) (outValue in
 
 // TableDef struct defines a table.
 type TableDef struct {
-	Name      string            // Name is the ClickHouse name of the table.
 	Key       string            // Key is the key for the table.
 	Engine    EngineType        // EngineType is the ClickHouse table engine.
 	FieldDefs map[int]*FieldDef // Map of fields in the table. The int key is the column order in the table.
@@ -408,13 +410,13 @@ type TableDef struct {
 
 // Get returns the FieldDef for field "name", nil if there is not such a field.
 // Since the map is by column order, this is handy to get the field by name.
-func (td *TableDef) Get(name string) (*FieldDef, error) {
-	for _, fdx := range td.FieldDefs {
+func (td *TableDef) Get(name string) (int, *FieldDef, error) {
+	for ind, fdx := range td.FieldDefs {
 		if fdx.Name == name {
-			return fdx, nil
+			return ind, fdx, nil
 		}
 	}
-	return nil, NewChErr(ErrFields, name)
+	return 0, nil, NewChErr(ErrFields, name)
 }
 
 // FindFormat determines the date format for a date represented as a string.
@@ -432,6 +434,7 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 // Impute looks at the data from Input and builds the FieldDefs.
 // It requires each field in rdr to come in as string.
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) error {
+	rdr.Reset()
 	defer rdr.Reset()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
@@ -464,7 +467,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				ok   bool
 			)
 			if fval, ok = data[0][ind].(string); ok != true {
-				return NewChErr(ErrStr, td.Name)
+				return NewChErr(ErrStr, fval, rowCount)
 			}
 			switch counts[ind].legal.Update(fval, &td.FieldDefs[ind].ChSpec) {
 			case Int:
@@ -475,7 +478,9 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				counts[ind].dates++
 			}
 		}
+
 	}
+
 	// Threshold to determine which type a field is (100*tol % agreement)
 	thresh := int(math.Max(1.0, tol*float64(rowCount)))
 
@@ -530,13 +535,13 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 }
 
 // Create func builds and issues CREATE TABLE ClickHouse statement
-func (td *TableDef) Create(db *sql.DB) error {
+func (td *TableDef) Create(db *sql.DB, table string) error {
 	//db should be database object
-	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", td.Name)
+	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", table)
 	if _, err := db.Exec(qry); err != nil {
 		return err
 	}
-	qry = fmt.Sprintf("CREATE TABLE %v (", td.Name)
+	qry = fmt.Sprintf("CREATE TABLE %v (", table)
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
 		fd := td.FieldDefs[ind]
 		// start by creating the ClickHouse type
@@ -570,29 +575,6 @@ func (td *TableDef) Create(db *sql.DB) error {
 	return err
 }
 
-// InsertData creates and issues a ClickHouse INSERT Statement
-// Should only be used with small amounts of data
-func (td *TableDef) InsertData(t Input, rowCount int, db *sql.DB) error {
-	qry := fmt.Sprintf("INSERT INTO %s VALUES \n", td.Name)
-	data, _ := t.Read(rowCount, true)
-	for r := 0; r < len(data); r++ {
-		qry += "("
-		for c := 0; c < len(data[r]); c++ {
-			char := ","
-			if c == len(data[r])-1 {
-				char = ")\n"
-			}
-			v := data[r][c]
-			if td.FieldDefs[c].ChSpec.Base == String {
-				v = fmt.Sprintf("'%s'", v)
-			}
-			qry += fmt.Sprintf("%v %s", v, char)
-		}
-	}
-	_, err := db.Exec(qry)
-	return err
-}
-
 // FileFormat enum has supported file types for bulk insert
 type FileFormat int
 
@@ -604,29 +586,7 @@ const (
 
 //go:generate stringer -type=FileFormat
 
-// InsertFile uses clickhouse-client to bulk insert a file
-func xInsertFile(tablename string, filename string, delim rune, format FileFormat, options string, con Connect) error {
-
-	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", con.Host, con.User)
-	if con.Password != "" {
-		cmd = fmt.Sprintf("%s --password=%s", cmd, con.Password)
-	}
-	cmd = fmt.Sprintf("%s %s ", cmd, options)
-	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(delim))
-	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, tablename, format, filename)
-	// running clickhouse-client as a command chokes on --query
-	c := exec.Command("bash", "-c", cmd)
-	err := c.Run()
-	return err
-}
-
-//TODO think about how to load from a query.  Can Export be used???
-
-//func InsertSql(table string, qry string) (err error) {
-//	return nil
-//}
-
-// Export transfers the contents of rdr to wrtr.  Typically, wrtr will be a file.
+// Export transfers the contents of rdr to wrtr.
 func Export(rdr Input, wrtr Output, separator string, eol string) error {
 
 	var data []Row
@@ -662,8 +622,6 @@ func Export(rdr Input, wrtr Output, separator string, eol string) error {
 		}
 	}
 }
-
-// TODO: think about whether to generalize this
 
 // Load reads n lines from rdr, writes them to wrtr and finally inserts the data into table.
 func Load(rdr Input, wrtr Output) (err error) {

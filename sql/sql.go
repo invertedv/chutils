@@ -24,7 +24,7 @@ func NewReader(sql string, db *sql.DB) *Reader {
 		DB:   db,
 		data: nil,
 		TableSpec: &chutils.TableDef{
-			Name:      "",
+			//			Name:      "",
 			Key:       "",
 			Engine:    chutils.MergeTree,
 			FieldDefs: nil,
@@ -82,7 +82,14 @@ func (r *Reader) Init() error {
 			}
 			chf.Length = int(l)
 		case chutils.FixedString:
-			l, err := strconv.ParseInt(trailing[1:len(trailing)-2], 10, 32)
+			// strip off leading/trailing parens
+			for len(trailing) > 0 && trailing[0] == '(' {
+				trailing = trailing[1:]
+			}
+			for len(trailing) > 0 && trailing[len(trailing)-1] == ')' {
+				trailing = trailing[:len(trailing)-1]
+			}
+			l, err := strconv.ParseInt(trailing, 10, 32)
 			if err != nil {
 				return err
 			}
@@ -129,8 +136,8 @@ func (rdr *Reader) Close() error {
 	return rdr.data.Close()
 }
 
-func (rdr *Reader) Insert() error {
-	qry := fmt.Sprintf("INSERT INTO %s %s", rdr.TableSpec.Name, rdr.Sql)
+func (rdr *Reader) Insert(table string) error {
+	qry := fmt.Sprintf("INSERT INTO %s %s", table, rdr.Sql)
 	if _, err := rdr.DB.Exec(qry); err != nil {
 		log.Fatalln(err)
 	}
@@ -163,12 +170,11 @@ func (w *Writer) EOL() string {
 }
 
 func (w *Writer) Insert() error {
+	if w.Table == "" {
+		return chutils.NewChErr(chutils.ErrSQL, "no table name")
+	}
 	qry := fmt.Sprintf("Insert into %s Values", w.Table) + string(w.hold) + ")"
 	_, err := w.DB.Exec(qry)
-	if err == nil {
-		w.hold = make([]byte, 0)
-		w.hold = append(w.hold, '(')
-	}
 	return err
 }
 
@@ -182,8 +188,8 @@ func (w *Writer) Name() string {
 	return w.Table
 }
 
-//TODO: make separator "," and eol "" ???
-func NewWriter(table string, db *sql.DB, separator string, eol string) *Writer {
+// NewWriter creates a new SQL writer
+func NewWriter(table string, db *sql.DB) *Writer {
 	return &Writer{Table: table,
 		DB:        db,
 		hold:      append(make([]byte, 0), '('),
@@ -192,19 +198,19 @@ func NewWriter(table string, db *sql.DB, separator string, eol string) *Writer {
 	}
 }
 
-func Wrtrs(table string, nWrtr int, db *sql.DB, separator string, eol string) (wrtrs []chutils.Output, err error) {
+func Wrtrs(table string, nWrtr int, db *sql.DB) (wrtrs []chutils.Output, err error) {
 
-	wrtrs = nil // make([]*os.File, 0)
+	wrtrs = nil
 	err = nil
 
 	for ind := 0; ind < nWrtr; ind++ {
-		a := NewWriter(table, db, separator, eol)
+		a := NewWriter(table, db)
 		wrtrs = append(wrtrs, a)
 	}
 	return
 }
 
-func Load(rdr chutils.Input, wrtr chutils.Output) (err error) {
+func xxxLoad(rdr chutils.Input, wrtr chutils.Output) (err error) {
 	err = chutils.Export(rdr, wrtr, ",", "")
 	if err != nil {
 		return
@@ -214,4 +220,4 @@ func Load(rdr chutils.Input, wrtr chutils.Output) (err error) {
 	return
 }
 
-// TODO: think about whether the TableDef should have a Name
+// TODO: think about whether the TableDef should have a Name, engine, key

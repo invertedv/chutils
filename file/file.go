@@ -207,9 +207,6 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		if csvrow, err = csvr.GetLine(); err == io.EOF {
 			return
 		}
-		//		if err == io.EOF {
-		//			return
-		//		}
 		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
 			err = chutils.NewChErr(chutils.ErrFieldCount, need, have)
 		}
@@ -223,7 +220,7 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		}
 		if validate {
 			for j := 0; j < numFields; j++ {
-				val, _ := csvr.TableSpec.FieldDefs[j].Validator(outrow[j], outrow, chutils.Pending)
+				val, _ := csvr.TableSpec.FieldDefs[j].Validator(outrow[j], csvr.TableSpec, outrow, chutils.Pending)
 				outrow[j] = val
 			}
 		}
