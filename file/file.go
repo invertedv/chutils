@@ -31,9 +31,6 @@ type Reader struct {
 	fileHandle io.ReadSeekCloser
 }
 
-//TODO: consider making this a io.ReadSeeker w/o close.
-//TODO: consider do I need filename?
-
 // NewReader initializes an instance of Reader
 func NewReader(filename string, separator rune, eol rune, quote rune, width int, skip int, maxRead int, rws io.ReadSeekCloser) *Reader {
 	r := bufio.NewReader(rws)
@@ -70,13 +67,13 @@ func (csvr *Reader) Reset() {
 }
 
 func (csvr *Reader) Seek(lineNo int) error {
-
 	_, _ = csvr.fileHandle.Seek(0, 0)
 	csvr.rdr = bufio.NewReader(csvr.fileHandle)
 	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
+		csvr.RowsRead++
 		if _, err := csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
-			return chutils.NewChErr(chutils.ErrSeek, lineNo)
+			return chutils.Wrapper(chutils.ErrSeek, fmt.Sprintf("line %d", ind))
 		}
 	}
 	return nil
@@ -92,7 +89,7 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 	for e := error(nil); e != io.EOF; {
 		if _, e = csvr.rdr.ReadString(byte(csvr.EOL)); e != nil {
 			if e != io.EOF {
-				return 0, chutils.NewChErr(chutils.ErrInput, "CountLines")
+				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
 			numLines -= csvr.Skip
 			return
@@ -108,8 +105,9 @@ func (csvr *Reader) Init() error {
 		csvr.Reset()
 	}
 	row, err := csvr.GetLine()
+	csvr.RowsRead++
 	if err != nil {
-		return chutils.NewChErr(chutils.ErrInput, 0)
+		return chutils.Wrapper(chutils.ErrInput, "initial read failed")
 	}
 
 	fds := make(map[int]*chutils.FieldDef)
@@ -117,7 +115,7 @@ func (csvr *Reader) Init() error {
 		fd := &chutils.FieldDef{
 			Name: fn,
 			ChSpec: chutils.ChField{
-				Base: chutils.Unknown},
+				Base: chutils.ChUnknown},
 			Description: "",
 			Legal:       &chutils.LegalValues{},
 		}
@@ -137,6 +135,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 		}
 		// No quote string, so just split on Separator.
 		if csvr.Quote == 0 {
+			l = strings.Replace(l, string(csvr.EOL), "", 1)
 			line = strings.Split(l, string(csvr.Separator))
 			return
 		}
@@ -147,7 +146,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 		for _, ch := range l {
 			switch ch {
 			case csvr.EOL:
-				line = append(line, string(f[0:ind]))
+				line = append(line, strings.Trim(string(f[0:ind]), " "))
 			case csvr.Quote:
 				haveQuote = !haveQuote
 			case csvr.Separator:
@@ -155,7 +154,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 					f[ind] = ch
 					ind++
 				} else {
-					line = append(line, string(f[0:ind]))
+					line = append(line, strings.Trim(string(f[0:ind]), " "))
 					ind = 0
 				}
 			default:
@@ -176,7 +175,7 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	}
 	lstr := string(l)
 	if len(lstr) != csvr.Width {
-		return nil, chutils.NewChErr(chutils.ErrFields, "line is wrong width")
+		return nil, chutils.Wrapper(chutils.ErrFields, "line is wrong width")
 	}
 	line = make([]string, len(csvr.TableSpec.FieldDefs))
 	start := 0
@@ -195,7 +194,7 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 	if csvr.RowsRead == 0 && csvr.Skip > 0 {
 		for i := 0; i < csvr.Skip; i++ {
 			if _, err = csvr.GetLine(); err != nil {
-				return nil, chutils.NewChErr(chutils.ErrInput, i)
+				return nil, chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("failed at row %d", i))
 			}
 		}
 	}
@@ -208,10 +207,12 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 			return
 		}
 		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
-			err = chutils.NewChErr(chutils.ErrFieldCount, need, have)
+			err = chutils.Wrapper(chutils.ErrFieldCount,
+				fmt.Sprintf("at row %d, need %d fields but got %d", csvr.RowsRead+1, need, have))
+			return
 		}
 		if err != nil {
-			err = chutils.NewChErr(chutils.ErrInput, rowCount)
+			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", csvr.RowsRead+1))
 			return
 		}
 		outrow := make(chutils.Row, 0)
@@ -236,7 +237,7 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 	}
 }
 
-// Divvy generates slices of len nChunks Input/Output by slicing up rdr0 data.  rdr0 is not part of the Input slice.
+// Rdrs generates slices of len nChunks Input/Output by slicing up rdr0 data.  rdr0 is not part of the Input slice.
 func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 
 	r = nil //make([]*Reader, 0)
@@ -252,7 +253,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 		if fh, err = os.Open(rdr0.filename); err != nil {
 			return
 		}
-		np := nper
+		np := start + nper - 1
 		if ind == nRdrs-1 {
 			np = 0
 		}
@@ -268,17 +269,17 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 }
 
 type Writer struct {
-	file      *os.File
-	separator string
-	eol       string
-	Con       chutils.Connect
-	Table     string
+	file      *os.File         // file is the file to write to
+	separator string           // separator is the field separator
+	eol       string           // eol is the end-of-line character
+	conn      *chutils.Connect // Con is the ClickHouse connect info (needed for Insert)
+	Table     string           // Table is the table to load created file to (needed for Insert)
 }
 
 func (w *Writer) Insert() error {
-	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", w.Con.Host, w.Con.User)
-	if w.Con.Password != "" {
-		cmd = fmt.Sprintf("%s --password=%s", cmd, w.Con.Password)
+	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", w.conn.Host, w.conn.User)
+	if w.conn.Password != "" {
+		cmd = fmt.Sprintf("%s --password=%s", cmd, w.conn.Password)
 	}
 	cmd = fmt.Sprintf("%s %s ", cmd, "")
 	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, w.Separator())
@@ -290,8 +291,7 @@ func (w *Writer) Insert() error {
 }
 
 func (w *Writer) Close() error {
-	//	return w.file.Close()
-	return nil
+	return w.file.Close()
 }
 
 func (w *Writer) Name() string {
@@ -311,17 +311,17 @@ func (w *Writer) Write(b []byte) (n int, err error) {
 	return
 }
 
-func NewWriter(f *os.File, con chutils.Connect, separator string, eol string, table string) *Writer {
+func NewWriter(f *os.File, con *chutils.Connect, separator string, eol string, table string) *Writer {
 	return &Writer{
 		file:      f,
-		Con:       con,
+		conn:      con,
 		separator: separator,
 		eol:       eol,
 		Table:     table,
 	}
 }
 
-func Wrtrs(tmpDir string, nWrtr int, con chutils.Connect, separator string, eol string, table string) (wrtrs []chutils.Output, err error) {
+func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator string, eol string, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 	var w *Writer
 

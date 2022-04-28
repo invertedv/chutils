@@ -12,6 +12,7 @@ package chutils
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -27,16 +28,18 @@ var (
 	FloatMissing = -1.0 //math.MaxFloat64
 )
 
-// DateFormats are formats to try when guessing the format
+// DateFormats are formats to try when guessing the format in Impute()
 var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
-	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601"}
+	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", time.RFC3339}
+
+var ErrSeeks = errors.New("Seek beyond EOF")
 
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
-	Reset()                                                  // Reset to beginning of table
-	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source data
-	Seek(lineNo int) error                                   // Seek moves to lineNo in source data
+	Reset()                                                  // Reset to beginning of source
+	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source
+	Seek(lineNo int) error                                   // Seek moves to lineNo in source
 	Name() string                                            // Name of input (file, table, etc)
 	Close() error                                            // Close the source
 }
@@ -44,22 +47,36 @@ type Input interface {
 // The Output interface specifies requirements for writing data.
 type Output interface {
 	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written
-	Name() string                      // Name of output (file, etc)
-	Insert() error                     //
-	Separator() string
-	EOL() string
-	Close() error
+	Name() string                      // Name of output (file, table)
+	Insert() error                     // Inserts into ClickHouse Table
+	Separator() string                 // Separator returns the field separator
+	EOL() string                       // EOL returns the End-of-line character
+	Close() error                      // Close writer
 }
 
 // Connect holds the ClickHouse connect information
 type Connect struct {
-	Host     string
-	User     string
-	Password string
+	Http     string // Http is "http" or "https"
+	Host     string // Host is host IP
+	User     string // User is ClickHouse user name
+	Password string // Password is user's password
+	*sql.DB         // ClickHouse database connector
 }
 
+func NewConnect(http string, host string, user string, password string) (con *Connect, err error) {
+	var db *sql.DB
+	err = nil
+	con = &Connect{http, host, user, password, db}
+	if con.DB, err = sql.Open("clickhouse", con.String()); err != nil {
+		return
+	}
+	err = con.DB.Ping()
+	return
+}
+
+// ClickHouse connect string
 func (c Connect) String() string {
-	return fmt.Sprintf("http://%s:8123/?user=%s&password=%s", c.Host, c.User, c.Password)
+	return fmt.Sprintf("%s://%s:8123/?user=%s&password=%s", c.Http, c.Host, c.User, c.Password)
 }
 
 // ErrType enum specifies the different error types trapped
@@ -79,42 +96,12 @@ const (
 )
 
 //go:generate stringer -type=ErrType
-
-// ChErr is the error handler for error messages
-type ChErr struct {
-	Err string
+func (e ErrType) Error() string {
+	return e.String()
 }
 
-func (e *ChErr) Error() string {
-	return e.Err
-}
-
-// NewChErr returns an error type. Debugging problems in input files is tedious -- so supply extra info where possible.
-func NewChErr(base ErrType, p ...any) *ChErr {
-	var errstr string
-	switch base {
-	case ErrInput:
-		errstr = fmt.Sprintf("input error row %v", p[0])
-	case ErrOutput:
-		errstr = fmt.Sprintf("output error row %v", p[0])
-	case ErrFieldCount:
-		errstr = fmt.Sprintf("expected %v fields got %v field", p[0], p[1])
-	case ErrSeek:
-		errstr = fmt.Sprintf("error seeking row %v", p[0])
-	case ErrDateFormat:
-		errstr = fmt.Sprintf("unable to find a date format for %v", p[0])
-	case ErrRWNum:
-		errstr = fmt.Sprintf("%v inputs != %v outputs", p[0], p[1])
-	case ErrStr:
-		errstr = fmt.Sprintf("field %v, row %v is not type string", p[0], p[1])
-	case ErrFields:
-		errstr = fmt.Sprintf("fields: %v", p[0])
-	case ErrSQL:
-		errstr = fmt.Sprintf("SQL Error: %v", p[0])
-	default:
-		errstr = "Other error"
-	}
-	return &ChErr{errstr}
+func Wrapper(e error, text string) error {
+	return fmt.Errorf("%v: %w", text, e)
 }
 
 // EngineType enum specifies ClickHouse engine types
@@ -131,22 +118,39 @@ const (
 type ChType int
 
 const (
-	Unknown     ChType = 0 + iota // Unknown: ClickHouse type is undetermined
-	Int                           // Int: ClickHouse type is Integer
-	String                        // String: ClickHouse type is String
-	FixedString                   // FixedString
-	Float                         // Float: ClickHouse type is Float
-	Date                          // Date: ClickHouse type is Date
+	ChUnknown     ChType = 0 + iota // Unknown: ClickHouse type is undetermined
+	ChInt                           // Int: ClickHouse type is Integer
+	ChString                        // String: ClickHouse type is String
+	ChFixedString                   // FixedString
+	ChFloat                         // Float: ClickHouse type is Float
+	ChDate                          // Date: ClickHouse type is Date
 )
 
-//go:generate stringer -type=ChType
+// Stringer which strips the leading Ch from the type.
+func (t ChType) String() string {
+	switch t {
+	case ChUnknown:
+		return "Unknown"
+	case ChInt:
+		return "Int"
+	case ChString:
+		return "String"
+	case ChFixedString:
+		return "FixedString"
+	case ChFloat:
+		return "Float"
+	case ChDate:
+		return "Date"
+	}
+	return ""
+}
 
 // ChField struct holds the specification for a ClickHouse field
 type ChField struct {
 	Base       ChType // Base is base type of ClickHouse field.
 	Length     int    // Length is length of field (0 for String).
 	OuterFunc  string // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
-	DateFormat string // Format for incoming dates from Input when dates come in as string.
+	DateFormat string // Format for incoming dates from Input
 }
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
@@ -155,15 +159,15 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 	var err error
 	outValue = inValue
 	switch t.Base {
-	case String, FixedString:
+	case ChString, ChFixedString:
 		switch x := inValue.(type) {
 		case float64, float32, int:
 			outValue = fmt.Sprintf("%v", x)
 		}
-		if t.Base == FixedString && len(inValue.(string)) > t.Length {
+		if t.Base == ChFixedString && len(inValue.(string)) > t.Length {
 			return nil, false
 		}
-	case Float:
+	case ChFloat:
 		switch x := inValue.(type) {
 		case string:
 			outValue, err = strconv.ParseFloat(x, t.Length)
@@ -173,7 +177,7 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 		case int:
 			fmt.Println("FILL ME IN -- check will fit in type length")
 		}
-	case Int:
+	case ChInt:
 		switch x := (inValue).(type) {
 		case string:
 			outValue, err = strconv.ParseInt(x, 10, t.Length)
@@ -184,10 +188,12 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 		case float64, float32:
 			fmt.Println("FILL ME IN")
 		}
-	case Date:
+	case ChDate:
 		switch x := (inValue).(type) {
 		case string:
-			outValue, err = time.Parse(t.DateFormat, x)
+			var outDate time.Time
+			outDate, err = time.Parse(t.DateFormat, x)
+			outValue = outDate.Format("2006-01-02")
 			if err != nil {
 				return nil, false
 			}
@@ -257,84 +263,29 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 	return
 }
 
-// Update takes a LegalValues struct and updates it with newVal value.
-// If the target is an int/float field, it will update High/Low.
-// If the target is a discrete field, it will add (if needed) the field to the map and update its count.
-func (l *LegalValues) Update(newVal string, target *ChField) (res ChType) {
+// FindType takes a LegalValues struct and updates it with newVal value.
+func FindType(newVal string, target *ChField) (res ChType) {
 
-	// if target != Unknown, this will force the type indicated by target
+	// if target != Unknown, then don't try anything
 	res = target.Base
 
 	// Figure out what type this newVal might be.
 	// The order of assessing this is: Date, Int, Float, String
-	if res == Unknown {
-		// LowLimit, HighLimit are float64. Converted to int later (if need be)
-		res = String
+	if res == ChUnknown {
+		// Assign to string first -- this always works
+		res = ChString
 		// float ?
 		if _, err := strconv.ParseFloat(newVal, 64); err == nil {
-			res = Float
+			res = ChFloat
 		}
 		// int ?
 		if _, err := strconv.ParseInt(newVal, 10, 64); err == nil {
-			res = Int
+			res = ChInt
 		}
+		// date?
 		if _, _, err := FindFormat(newVal); err == nil {
-			res = Date
+			res = ChDate
 		}
-	}
-	// Now update the legal values
-	switch res {
-	case Int, Float:
-		v, err := strconv.ParseFloat(newVal, 64)
-		if err != nil {
-			return
-		}
-		if l.LowLimit == nil || l.HighLimit == nil {
-			l.LowLimit = v
-			l.HighLimit = v
-			return
-		}
-		if v > l.HighLimit.(float64) {
-			l.HighLimit = v
-		}
-		if v < l.LowLimit.(float64) {
-			l.LowLimit = v
-		}
-	case String, FixedString:
-		if l.Levels == nil {
-			//			res = String
-			x := make(map[string]int, 0)
-			l.Levels = &x
-		}
-		(*l.Levels)[newVal]++
-	case Date:
-		var (
-			vx  time.Time
-			f   string
-			err error
-		)
-		if target.DateFormat != "" {
-			if vx, err = time.Parse(target.DateFormat, newVal); err != nil {
-				return
-			}
-		} else {
-			if f, vx, err = FindFormat(newVal); err != nil {
-				return
-			}
-			target.DateFormat = f
-		}
-		if l.FirstDate == nil || l.LastDate == nil {
-			l.FirstDate = &vx
-			l.LastDate = &vx
-			return
-		}
-		if (*l).FirstDate.Sub(vx) > 0 {
-			l.FirstDate = &vx
-		}
-		if (*l).LastDate.Sub(vx) < 0 {
-			l.LastDate = &vx
-		}
-		return
 	}
 	return
 }
@@ -381,7 +332,6 @@ func (fd *FieldDef) Validator(inValue interface{}, td *TableDef, r Row, s Status
 	}
 
 	// TODO: length check to include int, float, change Missing to Max value for length
-	// check FixedString is not too long
 	if fd.Legal.Check(outValue) {
 		return
 	}
@@ -416,7 +366,7 @@ func (td *TableDef) Get(name string) (int, *FieldDef, error) {
 			return ind, fdx, nil
 		}
 	}
-	return 0, nil, NewChErr(ErrFields, name)
+	return 0, nil, Wrapper(ErrFields, name)
 }
 
 // FindFormat determines the date format for a date represented as a string.
@@ -428,12 +378,12 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 			return
 		}
 	}
-	return "", DateMissing, NewChErr(ErrDateFormat, inDate)
+	return "", DateMissing, Wrapper(ErrDateFormat, inDate)
 }
 
 // Impute looks at the data from Input and builds the FieldDefs.
 // It requires each field in rdr to come in as string.
-func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) error {
+func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
 	rdr.Reset()
 	defer rdr.Reset()
 	// countType keeps track of the field values as the file is read
@@ -459,7 +409,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 			break
 		}
 		if errx != nil {
-			return NewChErr(ErrInput, rowCount)
+			return Wrapper(ErrInput, string(rowCount))
 		}
 		for ind := 0; ind < len(data[0]); ind++ {
 			var (
@@ -467,18 +417,17 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 				ok   bool
 			)
 			if fval, ok = data[0][ind].(string); ok != true {
-				return NewChErr(ErrStr, fval, rowCount)
+				return Wrapper(ErrStr, fmt.Sprintf("%v %v", fval, rowCount))
 			}
-			switch counts[ind].legal.Update(fval, &td.FieldDefs[ind].ChSpec) {
-			case Int:
+			switch FindType(fval, &td.FieldDefs[ind].ChSpec) {
+			case ChInt:
 				counts[ind].ints++
-			case Float:
+			case ChFloat:
 				counts[ind].floats++
-			case Date:
+			case ChDate:
 				counts[ind].dates++
 			}
 		}
-
 	}
 
 	// Threshold to determine which type a field is (100*tol % agreement)
@@ -488,57 +437,46 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64, fuzz int) 
 	for ind := 0; ind < numFields; ind++ {
 		fd := td.FieldDefs[ind]
 		// only impute type if user has not specified it
-		if fd.ChSpec.Base == Unknown {
+		if fd.ChSpec.Base == ChUnknown {
 			switch {
 			case counts[ind].dates >= thresh:
-				fd.ChSpec.Base, fd.ChSpec.Length = Date, 0
+				fd.ChSpec.Base, fd.ChSpec.Length = ChDate, 0
 				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
 				fd.Legal.FirstDate, fd.Legal.LastDate = counts[ind].legal.FirstDate, counts[ind].legal.LastDate
 				fd.Missing = DateMissing
 			case counts[ind].ints >= thresh:
-				fd.ChSpec.Base, fd.ChSpec.Length = Int, 64
+				fd.ChSpec.Base, fd.ChSpec.Length = ChInt, 64
 				fd.Missing = IntMissing
 			case (counts[ind].ints + counts[ind].floats) >= thresh:
 				// Some values may convert to int in the file -- these could also be floats
-				td.FieldDefs[ind].ChSpec.Base, td.FieldDefs[ind].ChSpec.Length = Float, 64
+				td.FieldDefs[ind].ChSpec.Base, td.FieldDefs[ind].ChSpec.Length = ChFloat, 64
 				td.FieldDefs[ind].Missing = FloatMissing
 			default:
-				fd.ChSpec.Base = String
+				fd.ChSpec.Base = ChString
 				fd.Missing = "!"
 			}
 		}
 		switch fd.ChSpec.Base {
-		case Int:
+		case ChInt:
 			// Convert LowLimit, HighLimit to int
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit =
-				nil, int(counts[ind].legal.LowLimit.(float64)), int(counts[ind].legal.HighLimit.(float64))
-		case Float:
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int(0), int(0)
+			//				nil, int(counts[ind].legal.LowLimit.(float64)), int(counts[ind].legal.HighLimit.(float64))
+		case ChFloat:
 			// Some values may convert to int in the file -- these could also be floats
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit =
-				nil, counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, float64(0.0), float64(0.0)
+			//				nil, counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
 		default:
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = counts[ind].legal.Levels, nil, nil
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
 		}
 
-		if fuzz > 0 && (td.FieldDefs[ind].ChSpec.Base == String ||
-			td.FieldDefs[ind].ChSpec.Base == FixedString) {
-			// drop any with counts below fuzz
-			for k, f := range *td.FieldDefs[ind].Legal.Levels {
-				// TODO: change fuzz to float??
-				if f <= fuzz {
-					delete(*td.FieldDefs[ind].Legal.Levels, k)
-				}
-			}
-		}
 	}
 	return nil
 }
 
 // Create func builds and issues CREATE TABLE ClickHouse statement
-func (td *TableDef) Create(db *sql.DB, table string) error {
-	//db should be database object
+func (td *TableDef) Create(conn *Connect, table string) error {
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", table)
-	if _, err := db.Exec(qry); err != nil {
+	if _, err := conn.Exec(qry); err != nil {
 		return err
 	}
 	qry = fmt.Sprintf("CREATE TABLE %v (", table)
@@ -547,9 +485,9 @@ func (td *TableDef) Create(db *sql.DB, table string) error {
 		// start by creating the ClickHouse type
 		ftype := fmt.Sprintf("%v", fd.ChSpec.Base)
 		switch fd.ChSpec.Base {
-		case Int, Float:
+		case ChInt, ChFloat:
 			ftype = fmt.Sprintf("%s%d", ftype, fd.ChSpec.Length)
-		case FixedString:
+		case ChFixedString:
 			ftype = fmt.Sprintf("%s(%d)", ftype, fd.ChSpec.Length)
 		}
 		if fd.ChSpec.OuterFunc != "" {
@@ -571,7 +509,7 @@ func (td *TableDef) Create(db *sql.DB, table string) error {
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
-	_, err := db.Exec(qry)
+	_, err := conn.Exec(qry)
 	return err
 }
 
@@ -587,7 +525,7 @@ const (
 //go:generate stringer -type=FileFormat
 
 // Export transfers the contents of rdr to wrtr.
-func Export(rdr Input, wrtr Output, separator string, eol string) error {
+func Export(rdr Input, wrtr Output) error {
 
 	var data []Row
 	for r := 0; ; r++ {
@@ -598,15 +536,15 @@ func Export(rdr Input, wrtr Output, separator string, eol string) error {
 				return nil
 			}
 			if err != nil {
-				return NewChErr(ErrInput, r)
+				return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 			}
 			fmt.Println("done writing", time.Now())
 		}
 		line := make([]byte, 0)
 		for c := 0; c < len(data[0]); c++ {
-			char := separator
+			char := wrtr.Separator() // separator
 			if c == len(data[0])-1 {
-				char = eol
+				char = wrtr.EOL() //eol
 			}
 			switch v := data[0][c].(type) {
 			case string:
@@ -618,19 +556,18 @@ func Export(rdr Input, wrtr Output, separator string, eol string) error {
 			}
 		}
 		if _, err = wrtr.Write(line); err != nil {
-			return NewChErr(ErrOutput, r)
+			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 		}
 	}
 }
 
 // Load reads n lines from rdr, writes them to wrtr and finally inserts the data into table.
 func Load(rdr Input, wrtr Output) (err error) {
-	err = Export(rdr, wrtr, wrtr.Separator(), wrtr.EOL())
+	err = Export(rdr, wrtr)
 	if err != nil {
 		return
 	}
 	err = wrtr.Insert()
-	//	wrtr.Close()
 	return
 }
 
@@ -643,7 +580,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output,
 		nWorker = runtime.NumCPU()
 	}
 	if len(rdrs) != len(wrtrs) {
-		return NewChErr(ErrRWNum, len(rdrs), len(wrtrs))
+		return Wrapper(ErrRWNum, fmt.Sprintf("%v %v", len(rdrs), len(wrtrs)))
 	}
 	queueLen := len(rdrs)
 	if nWorker > queueLen {

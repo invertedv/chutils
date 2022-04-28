@@ -17,11 +17,12 @@ func _() {
 	_ = x[ErrSeek-6]
 	_ = x[ErrRWNum-7]
 	_ = x[ErrStr-8]
+	_ = x[ErrSQL-9]
 }
 
-const _ErrType_name = "ErrUnknownErrInputErrOutputErrFieldsErrFieldCountErrDateFormatErrSeekErrRWNumErrStr"
+const _ErrType_name = "ErrUnknownErrInputErrOutputErrFieldsErrFieldCountErrDateFormatErrSeekErrRWNumErrStrErrSQL"
 
-var _ErrType_index = [...]uint8{0, 10, 18, 27, 36, 49, 62, 69, 77, 83}
+var _ErrType_index = [...]uint8{0, 10, 18, 27, 36, 49, 62, 69, 77, 83, 89}
 
 func (i ErrType) String() string {
 	if i < 0 || i >= ErrType(len(_ErrType_index)-1) {

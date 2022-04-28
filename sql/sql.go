@@ -4,25 +4,28 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/invertedv/chutils"
+	"io"
 	"log"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Reader struct {
-	Sql string // Sql is the SELECT string.  It does not have an INSERT
-	DB  *sql.DB
+	Sql      string // Sql is the SELECT string.  It does not have an INSERT
+	conn     *chutils.Connect
+	RowsRead int
 	//	Table string
 	data      *sql.Rows
 	TableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
-
 }
 
-func NewReader(sql string, db *sql.DB) *Reader {
+func NewReader(sql string, conn *chutils.Connect) *Reader {
 	return &Reader{
-		Sql:  sql,
-		DB:   db,
-		data: nil,
+		Sql:      sql,
+		conn:     conn,
+		RowsRead: 0,
+		data:     nil,
 		TableSpec: &chutils.TableDef{
 			//			Name:      "",
 			Key:       "",
@@ -32,13 +35,13 @@ func NewReader(sql string, db *sql.DB) *Reader {
 	}
 }
 
-func (r *Reader) Init() error {
+func (rdr *Reader) Init() error {
 
-	if r.Sql == "" {
-		return chutils.NewChErr(chutils.ErrSQL)
+	if rdr.Sql == "" {
+		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
-	qry := "SELECT * FROM (" + r.Sql + ") LIMIT 1"
-	rows, err := r.DB.Query(qry)
+	qry := "SELECT * FROM (" + rdr.Sql + ") LIMIT 1"
+	rows, err := rdr.conn.Query(qry)
 	defer rows.Close()
 
 	if err != nil {
@@ -65,7 +68,7 @@ func (r *Reader) Init() error {
 			chf.OuterFunc = "LowCardinality"
 		}
 		types := []string{"Date", "Int", "Float", "FixedString", "String"}
-		chtypes := []chutils.ChType{chutils.Date, chutils.Int, chutils.Float, chutils.FixedString, chutils.String}
+		chtypes := []chutils.ChType{chutils.ChDate, chutils.ChInt, chutils.ChFloat, chutils.ChFixedString, chutils.ChString}
 		var trailing string
 		for i, t := range types {
 			if indx := strings.Index(tn, t); indx >= 0 {
@@ -75,13 +78,16 @@ func (r *Reader) Init() error {
 			}
 		}
 		switch chf.Base {
-		case chutils.Int, chutils.Float:
+		case chutils.ChDate:
+			// ClickHouse connector brings in dates with this format
+			chf.DateFormat = time.RFC3339
+		case chutils.ChInt, chutils.ChFloat:
 			l, err := strconv.ParseInt(trailing, 10, 32)
 			if err != nil {
 				return err
 			}
 			chf.Length = int(l)
-		case chutils.FixedString:
+		case chutils.ChFixedString:
 			// strip off leading/trailing parens
 			for len(trailing) > 0 && trailing[0] == '(' {
 				trailing = trailing[1:]
@@ -104,41 +110,110 @@ func (r *Reader) Init() error {
 		}
 		fds[ind] = fd
 	}
-	r.TableSpec.FieldDefs = fds
+	rdr.TableSpec.FieldDefs = fds
 	return nil
 }
 
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err error) {
+	data = nil
+	if rdr.data == nil {
+		if rdr.data, err = rdr.conn.Query(rdr.Sql); err != nil {
+			return nil, err
+		}
+	}
+	cols, err := rdr.data.Columns()
+	if err != nil {
+		return
+	}
+	ncols := len(cols)
 
-	return nil, nil
+	for rowCount := 0; rowCount < nTarget; rowCount++ {
+		t := make([]interface{}, ncols)
+		for ind := 0; ind < ncols; ind++ {
+			t[ind] = new(sql.RawBytes)
+		}
+		if !rdr.data.Next() {
+			rdr.Reset()
+			return data, io.EOF
+		}
+		rdr.RowsRead++
+		err = rdr.data.Scan(t...)
+		if err != nil {
+			return
+		}
+		row := make(chutils.Row, 0)
+		for ind := 0; ind < ncols; ind++ {
+			l := string(*t[ind].(*sql.RawBytes))
+			//			if ind := strings.Index(l, "T00:00:00Z"); ind > 0 {
+			//				l = l[:ind]
+			//			}
+			row = append(row, l)
+		}
+		if validate && rdr.TableSpec.FieldDefs != nil {
+			for ind := 0; ind < ncols; ind++ {
+				outValue, _ := rdr.TableSpec.FieldDefs[ind].Validator(row[ind], rdr.TableSpec, row, chutils.Pending)
+				row[ind] = outValue
+			}
+		}
+		data = append(data, row)
+	}
+	return
 }
 
 func (rdr *Reader) Reset() {
+	if rdr.data != nil {
+		rdr.data.Close()
+	}
+	var e error
+	if rdr.data, e = rdr.conn.Query(rdr.Sql); e != nil {
+		return
+	}
+	rdr.RowsRead = 0
 	return
 }
 
 func (rdr *Reader) CountLines() (numLines int, err error) {
-	return 0, nil
+	var res *sql.Rows
+	numLines = 0
+	qry := fmt.Sprintf("SELECT COUNT(*) AS n FROM (%s)", rdr.Sql)
+	if res, err = rdr.conn.Query(qry); err != nil {
+		return
+	}
+	defer res.Close()
+	for res.Next() {
+		if err = res.Scan(&numLines); err != nil {
+			numLines = 0
+		}
+		return
+	}
+	return
 }
 
 func (rdr *Reader) Seek(lineNo int) error {
+	rdr.Reset()
+	for cnt := 0; cnt < lineNo-1; cnt++ {
+		if !rdr.data.Next() {
+			return chutils.Wrapper(chutils.ErrSQL, "seek past end of table")
+		}
+	}
 	return nil
 }
 
 func (rdr *Reader) Name() string {
-	return "My Name"
+	return "N/A"
 }
 
 func (rdr *Reader) Close() error {
 	if rdr.data == nil {
 		return nil
 	}
+	rdr.RowsRead = 0
 	return rdr.data.Close()
 }
 
 func (rdr *Reader) Insert(table string) error {
 	qry := fmt.Sprintf("INSERT INTO %s %s", table, rdr.Sql)
-	if _, err := rdr.DB.Exec(qry); err != nil {
+	if _, err := rdr.conn.Exec(qry); err != nil {
 		log.Fatalln(err)
 	}
 	return nil
@@ -148,7 +223,7 @@ type Writer struct {
 	Table     string
 	separator string
 	eol       string
-	DB        *sql.DB
+	conn      *chutils.Connect
 	hold      []byte
 }
 
@@ -171,10 +246,10 @@ func (w *Writer) EOL() string {
 
 func (w *Writer) Insert() error {
 	if w.Table == "" {
-		return chutils.NewChErr(chutils.ErrSQL, "no table name")
+		return chutils.Wrapper(chutils.ErrSQL, "no table name")
 	}
 	qry := fmt.Sprintf("Insert into %s Values", w.Table) + string(w.hold) + ")"
-	_, err := w.DB.Exec(qry)
+	_, err := w.conn.Exec(qry)
 	return err
 }
 
@@ -189,35 +264,23 @@ func (w *Writer) Name() string {
 }
 
 // NewWriter creates a new SQL writer
-func NewWriter(table string, db *sql.DB) *Writer {
+func NewWriter(table string, conn *chutils.Connect) *Writer {
 	return &Writer{Table: table,
-		DB:        db,
+		conn:      conn,
 		hold:      append(make([]byte, 0), '('),
 		separator: ",",
 		eol:       "",
 	}
 }
 
-func Wrtrs(table string, nWrtr int, db *sql.DB) (wrtrs []chutils.Output, err error) {
+func Wrtrs(table string, nWrtr int, conn *chutils.Connect) (wrtrs []chutils.Output, err error) {
 
 	wrtrs = nil
 	err = nil
 
 	for ind := 0; ind < nWrtr; ind++ {
-		a := NewWriter(table, db)
+		a := NewWriter(table, conn)
 		wrtrs = append(wrtrs, a)
 	}
 	return
 }
-
-func xxxLoad(rdr chutils.Input, wrtr chutils.Output) (err error) {
-	err = chutils.Export(rdr, wrtr, ",", "")
-	if err != nil {
-		return
-	}
-	err = wrtr.Insert()
-	//	err = InsertFile(table, wrtr.Name(), '|', CSV, "", con)
-	return
-}
-
-// TODO: think about whether the TableDef should have a Name, engine, key
