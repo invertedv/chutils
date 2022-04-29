@@ -18,17 +18,17 @@ import (
 
 // Reader is a Reader that satisfies chutils Input interface. It reads files.
 type Reader struct {
-	Separator  rune              // Separator between fields in the file
-	Skip       int               // Skip is the # of rows to skip in the file
-	RowsRead   int               // Rowsread is current count of rows read from the file
-	MaxRead    int               // Max rows to read
-	TableSpec  *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
-	EOL        rune              // EOL is the end of line character
-	Width      int               // Line width for flat files
-	Quote      rune              // Optional quote around strings that contain the Separator
-	rdr        *bufio.Reader     // rdr is encoding/file package reader
-	filename   string            // file we are reading from
-	fileHandle io.ReadSeekCloser
+	Separator rune              // Separator between fields in the file
+	Skip      int               // Skip is the # of rows to skip in the file
+	RowsRead  int               // RowsRead is current count of rows read from the file (includes header)
+	MaxRead   int               // MaxRead is the maximum number of rows to read
+	TableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing the fields in the source.  Can be supplied or derived from the file
+	EOL       rune              // EOL is the end of line character
+	Width     int               // Width is the line width for flat files
+	Quote     rune              // Quote is the optional quote around strings that contain the Separator
+	rdr       *bufio.Reader     // rdr is encoding/file package reader that reads from rws
+	filename  string            // filename is source we are reading from
+	rws       io.ReadSeekCloser // rws is the interface to source of data
 }
 
 // NewReader initializes an instance of Reader
@@ -36,17 +36,17 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 	r := bufio.NewReader(rws)
 
 	return &Reader{
-		Separator:  separator,
-		Skip:       skip,
-		RowsRead:   0,
-		MaxRead:    maxRead,
-		TableSpec:  &chutils.TableDef{},
-		EOL:        eol,
-		Width:      width,
-		Quote:      quote,
-		rdr:        r,
-		filename:   filename,
-		fileHandle: rws,
+		Separator: separator,
+		Skip:      skip,
+		RowsRead:  0,
+		MaxRead:   maxRead,
+		TableSpec: &chutils.TableDef{},
+		EOL:       eol,
+		Width:     width,
+		Quote:     quote,
+		rdr:       r,
+		filename:  filename,
+		rws:       rws,
 	}
 }
 
@@ -55,20 +55,20 @@ func (csvr *Reader) Name() string {
 }
 
 func (csvr *Reader) Close() error {
-	return csvr.fileHandle.Close()
+	return csvr.rws.Close()
 }
 
 // Reset sets the file pointer to the start of the file
 func (csvr *Reader) Reset() {
-	_, _ = csvr.fileHandle.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	_, _ = csvr.rws.Seek(0, 0)
+	csvr.rdr = bufio.NewReader(csvr.rws)
 	csvr.RowsRead = 0
 	return
 }
 
 func (csvr *Reader) Seek(lineNo int) error {
-	_, _ = csvr.fileHandle.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	_, _ = csvr.rws.Seek(0, 0)
+	csvr.rdr = bufio.NewReader(csvr.rws)
 	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
 		csvr.RowsRead++
@@ -80,8 +80,8 @@ func (csvr *Reader) Seek(lineNo int) error {
 }
 
 func (csvr *Reader) CountLines() (numLines int, err error) {
-	_, _ = csvr.fileHandle.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.fileHandle)
+	_, _ = csvr.rws.Seek(0, 0)
+	csvr.rdr = bufio.NewReader(csvr.rws)
 	defer csvr.Reset()
 
 	numLines = 0
@@ -272,7 +272,8 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 }
 
 type Writer struct {
-	file      *os.File         // file is the file to write to
+	io.WriteCloser
+	name      string
 	separator string           // separator is the field separator
 	eol       string           // eol is the end-of-line character
 	conn      *chutils.Connect // Con is the ClickHouse connect info (needed for Insert)
@@ -293,12 +294,8 @@ func (w *Writer) Insert() error {
 	return err
 }
 
-func (w *Writer) Close() error {
-	return w.file.Close()
-}
-
 func (w *Writer) Name() string {
-	return w.file.Name()
+	return w.name
 }
 
 func (w *Writer) EOL() string {
@@ -309,26 +306,14 @@ func (w *Writer) Separator() string {
 	return w.separator
 }
 
-func (w *Writer) Write(b []byte) (n int, err error) {
-	n, err = w.file.Write(b)
-	return
-}
-
-func NewWriter(f *os.File, con *chutils.Connect, separator string, eol string, table string) *Writer {
-	return &Writer{
-		file:      f,
-		conn:      con,
-		separator: separator,
-		eol:       eol,
-		Table:     table,
-	}
+func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator string, eol string, table string) *Writer {
+	return &Writer{f, name, separator, eol, con, table}
 }
 
 func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator string, eol string, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
-	var w *Writer
 
-	wrtrs = nil // make([]*os.File, 0)
+	wrtrs = nil
 	rand.Seed(time.Now().UnixMicro())
 
 	for ind := 0; ind < nWrtr; ind++ {
@@ -336,7 +321,7 @@ func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator string, eol
 		if a, err = os.Create(tmpFile); err != nil {
 			return
 		}
-		w = NewWriter(a, con, separator, eol, table)
+		w := NewWriter(a, tmpFile, con, separator, eol, table)
 		wrtrs = append(wrtrs, w)
 	}
 	return

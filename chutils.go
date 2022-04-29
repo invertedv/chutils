@@ -12,7 +12,6 @@ package chutils
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -31,8 +30,6 @@ var (
 // DateFormats are formats to try when guessing the format in Impute()
 var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
 	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", time.RFC3339}
-
-var ErrSeeks = errors.New("Seek beyond EOF")
 
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
@@ -420,7 +417,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
 			break
 		}
 		if errx != nil {
-			return Wrapper(ErrInput, string(rowCount))
+			return Wrapper(ErrInput, fmt.Sprintf("%d", rowCount))
 		}
 		for ind := 0; ind < len(data[0]); ind++ {
 			var (
