@@ -140,33 +140,77 @@ func TestReader_Read(t *testing.T) {
 			t.Errorf("case %d element should be %v but got %v", j, result[j], d[0][0])
 		}
 	}
-	rt := &rstr{*strings.NewReader(input[0])}
-	rt1 := NewReader("abc", ',', '\n', quote[0], 0, 1, 0, rt)
+
+	// Test type conversions, min/max legal values
+
+	inputc := "a,b,c,d ,e,f,g,h,i\n 2000-01-03, 3.4,A  ,BD,42,2000/1/2,ABCD,10000.1,2030-01-01\n"
+	field := []string{"a", "b", "c", "e", "f", "g", "h", "i"}
+	col = []int{0, 1, 2, 4, 5, 6, 7, 8}
+	base := []chutils.ChType{chutils.ChDate, chutils.ChFloat, chutils.ChFixedString, chutils.ChInt, chutils.ChDate,
+		chutils.ChFixedString, chutils.ChFloat, chutils.ChDate}
+	length := []int{0, 64, 1, 16, 0, 2, 64, 0}
+	datefmt := []string{"2006-01-02", "", "", "", "2006-01-02", "", "", "2006-01-02"}
+	dtmiss := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	dtmax, _ := time.Parse("2006-01-02", "2022-12-31")
+	missing := []interface{}{dtmiss, -1.0, "!", -1, dtmiss, "!", -1.0, dtmiss}
+	maxes := []interface{}{dtmax, 1000.0, "", 100, dtmax, "", 1000.0, dtmax}
+	dtmin, _ := time.Parse("2006-01-02", "2000-01-01")
+	mins := []interface{}{dtmin, 0.0, "", 0, dtmin, "", 0.0, dtmin}
+	dt, _ := time.Parse("2006-01-02", "2000-01-03")
+	result1 := []interface{}{dt, 3.4, "A", 42, dtmiss, "!", -1.0, dtmiss}
+
+	rt := &rstr{*strings.NewReader(inputc)}
+	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt)
 	if e := rt1.Init(); e != nil {
 		t.Errorf("unexpected Init error, case %d", 0)
 	}
-
-	// Loop on type conversions
-
-	rt1.TableSpec.FieldDefs[1].ChSpec.Base = chutils.ChDate
-	td := "2010-12-31"
-	rt1.TableSpec.FieldDefs[1].Missing, _ = time.Parse("2006-01-02", td)
-
-	rt1.TableSpec.FieldDefs[1].ChSpec.Base = chutils.ChInt
-	rt1.TableSpec.FieldDefs[1].ChSpec.Length = 32
-
+	for j := 0; j < len(field); j++ {
+		_, fd, e := rt1.TableSpec.Get(field[j])
+		if e != nil {
+			t.Errorf("unexpected Get error, field: %s", field[j])
+			return
+		}
+		fd.ChSpec.Base = base[j]
+		fd.ChSpec.Length = length[j]
+		fd.ChSpec.DateFormat = datefmt[j]
+		fd.Missing = missing[j]
+		if base[j] == chutils.ChInt || base[j] == chutils.ChFloat {
+			fd.Legal.HighLimit = maxes[j]
+			fd.Legal.LowLimit = mins[j]
+		}
+		if base[j] == chutils.ChDate {
+			if dx, ok := maxes[j].(time.Time); ok {
+				fd.Legal.LastDate = &dx
+			}
+			if dx, ok := mins[j].(time.Time); ok {
+				fd.Legal.FirstDate = &dx
+			}
+		}
+	}
 	d, e := rt1.Read(1, true)
 	if e != nil {
-		t.Errorf("unexpected error reading case 0 (2nd time")
+		t.Errorf("unexpected error reading type check case")
 		return
 	}
-	tm, ok := d[0][1].(time.Time)
-	if !ok {
-		t.Errorf("conversion error")
-		return
+	for j := 0; j < len(field); j++ {
+		val := d[0][col[j]]
+		switch base[j] {
+		case chutils.ChFloat:
+			if val.(float64) != result1[j].(float64) {
+				t.Errorf("Type test, expected %v got %v", result1[j], val)
+			}
+		case chutils.ChDate:
+			if val.(time.Time) != result1[j].(time.Time) {
+				t.Errorf("Type test, expected %v got %v", result1[j], val)
+			}
+		case chutils.ChInt:
+			if val.(int) != result1[j].(int) {
+				t.Errorf("Type test, expected %v got %v", result1[j], val)
+			}
+		case chutils.ChFixedString:
+			if val.(string) != result1[j].(string) {
+				t.Errorf("Type test, expected %v got %v", result1[j], val)
+			}
+		}
 	}
-	if tm.Format("2006-01-02") != td {
-		t.Errorf("error missing date")
-	}
-
 }

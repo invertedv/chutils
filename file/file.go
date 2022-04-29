@@ -137,6 +137,9 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 		if csvr.Quote == 0 {
 			l = strings.Replace(l, string(csvr.EOL), "", 1)
 			line = strings.Split(l, string(csvr.Separator))
+			for ind, l := range line {
+				line[ind] = strings.Trim(l, " ")
+			}
 			return
 		}
 		// The file is quoted, so scan and don't count any Separator that occurs between the quotes.

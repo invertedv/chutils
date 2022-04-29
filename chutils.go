@@ -193,7 +193,7 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 		case string:
 			var outDate time.Time
 			outDate, err = time.Parse(t.DateFormat, x)
-			outValue = outDate.Format("2006-01-02")
+			outValue = outDate //changed 4/29 outDate.Format("2006-01-02")
 			if err != nil {
 				return nil, false
 			}
@@ -234,29 +234,40 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 			}
 		}
 	case float64:
-		if l.LowLimit == nil || l.HighLimit == nil || l.LowLimit == l.HighLimit {
+		if l.LowLimit == nil && l.HighLimit == nil {
 			return
 		}
-		// Do range check
-		if val >= l.LowLimit.(float64) && val <= l.HighLimit.(float64) {
-			return
+		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
+		low, ok_low := l.LowLimit.(float64)
+		high, ok_high := l.HighLimit.(float64)
+		if ok_low && ok_high {
+			// Do range check
+			if val >= low && val <= high {
+				return
+			}
 		}
 	case int:
-		// If they are the same, that means any value is OK
-		if l.LowLimit == nil || l.HighLimit == nil || l.LowLimit == l.HighLimit {
+		if l.LowLimit == nil && l.HighLimit == nil {
 			return
 		}
-		// Do range check
-		if val >= l.LowLimit.(int) && val <= l.HighLimit.(int) {
-			return
+		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
+		low, ok_low := l.LowLimit.(int)
+		high, ok_high := l.HighLimit.(int)
+		if ok_low && ok_high {
+			// Do range check
+			if val >= low && val <= high {
+				return
+			}
 		}
-	// TODO: fill this in
 	case time.Time:
-		if l.FirstDate == nil || l.LastDate == nil {
+		if l.FirstDate == nil && l.LastDate == nil {
 			return
 		}
-		if val.Sub(*l.FirstDate) >= 0 && (*l).LastDate.Sub(val) >= 0 {
-			return
+		// These will be the correct type
+		if l.FirstDate != nil && l.LastDate != nil {
+			if val.Sub(*l.FirstDate) >= 0 && (*l).LastDate.Sub(val) >= 0 {
+				return
+			}
 		}
 	}
 	ok = false
