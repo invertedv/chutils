@@ -21,7 +21,7 @@ func TestReader_Seek(t *testing.T) {
 	result := []string{"1", "3", "5", "1", "EOF"}
 
 	rt := &rstr{*strings.NewReader(input[0])}
-	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt)
+	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
 	if e := rt1.Init(); e != nil {
 		t.Errorf("Init failed")
 		return
@@ -53,7 +53,7 @@ func TestReader_Reset(t *testing.T) {
 	result := []string{"1", "1", "3", "5"}
 
 	rt := &rstr{*strings.NewReader(input[0])}
-	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt)
+	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
 	if e := rt1.Init(); e != nil {
 		t.Errorf("Init failed")
 		return
@@ -88,7 +88,7 @@ func TestReader_Init(t *testing.T) {
 
 	for j := 0; j < len(results); j++ {
 		rt := &rstr{*strings.NewReader(input[j])}
-		rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt)
+		rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
 		if e := rt1.Init(); e != nil {
 			t.Errorf("unexpected error")
 		}
@@ -117,7 +117,7 @@ func TestReader_Read(t *testing.T) {
 	for j := 0; j < len(result); j++ {
 
 		rt := &rstr{*strings.NewReader(input[j])}
-		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt)
+		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
 		if e := rt1.Init(); e != nil {
 			t.Errorf("unexpected Init error, case %d", j)
 			break
@@ -141,26 +141,36 @@ func TestReader_Read(t *testing.T) {
 		}
 	}
 
-	// Test type conversions, min/max legal values
+	// Test type conversions, HighLimit/LowLimit/levels legal values
 
-	inputc := "a,b,c,d ,e,f,g,h,i\n 2000-01-03, 3.4,A  ,BD,42,2000/1/2,ABCD,10000.1,2030-01-01\n"
-	field := []string{"a", "b", "c", "e", "f", "g", "h", "i"}
-	col = []int{0, 1, 2, 4, 5, 6, 7, 8}
-	base := []chutils.ChType{chutils.ChDate, chutils.ChFloat, chutils.ChFixedString, chutils.ChInt, chutils.ChDate,
-		chutils.ChFixedString, chutils.ChFloat, chutils.ChDate}
-	length := []int{0, 64, 1, 16, 0, 2, 64, 0}
-	datefmt := []string{"2006-01-02", "", "", "", "2006-01-02", "", "", "2006-01-02"}
+	// data
+	inputc := "a,b,c,d ,e,f,g,h,i,j\n 2000-01-03, 3.4,A  ,BD,42,2000/1/2,ABCD,10000.1,2030-01-01,Hi\n"
+	// values for FieldDef
+	field := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	base := []chutils.ChType{chutils.ChDate, chutils.ChFloat, chutils.ChFixedString, chutils.ChFixedString,
+		chutils.ChInt, chutils.ChDate, chutils.ChFixedString, chutils.ChFloat, chutils.ChDate, chutils.ChString}
+	length := []int{0, 64, 1, 2, 16, 0, 2, 64, 0, 0}
+	datefmt := []string{"2006-01-02", "", "", "", "", "2006-01-02", "", "", "2006-01-02", ""}
 	dtmiss := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	dtmax, _ := time.Parse("2006-01-02", "2022-12-31")
-	missing := []interface{}{dtmiss, -1.0, "!", -1, dtmiss, "!", -1.0, dtmiss}
-	maxes := []interface{}{dtmax, 1000.0, "", 100, dtmax, "", 1000.0, dtmax}
+	missing := []interface{}{dtmiss, -1.0, "!", "X", -1, dtmiss, "!", -1.0, dtmiss, "0"}
+	maxes := []interface{}{dtmax, 1000.0, "", "", 100, dtmax, "", 1000.0, dtmax}
 	dtmin, _ := time.Parse("2006-01-02", "2000-01-01")
-	mins := []interface{}{dtmin, 0.0, "", 0, dtmin, "", 0.0, dtmin}
+	mins := []interface{}{dtmin, 0.0, "", "", 0, dtmin, "", 0.0, dtmin}
+
+	mp := make(map[string]int)
+	mp["BD"] = 1
+	mp1 := make(map[string]int)
+	mp1["HI"] = 1
+	levels := []map[string]int{nil, nil, nil, mp, nil, nil, nil, nil, nil, mp1}
+
+	// test values
+	col = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
 	dt, _ := time.Parse("2006-01-02", "2000-01-03")
-	result1 := []interface{}{dt, 3.4, "A", 42, dtmiss, "!", -1.0, dtmiss}
+	result1 := []interface{}{dt, 3.4, "A", "BD", 42, dtmiss, "!", -1.0, dtmiss, "X"}
 
 	rt := &rstr{*strings.NewReader(inputc)}
-	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt)
+	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
 	if e := rt1.Init(); e != nil {
 		t.Errorf("unexpected Init error, case %d", 0)
 	}
@@ -178,6 +188,9 @@ func TestReader_Read(t *testing.T) {
 			fd.Legal.HighLimit = maxes[j]
 			fd.Legal.LowLimit = mins[j]
 		}
+		if base[j] == chutils.ChString || base[j] == chutils.ChFixedString {
+			fd.Legal.Levels = &levels[j]
+		}
 		if base[j] == chutils.ChDate {
 			if dx, ok := maxes[j].(time.Time); ok {
 				fd.Legal.LastDate = &dx
@@ -187,11 +200,13 @@ func TestReader_Read(t *testing.T) {
 			}
 		}
 	}
+	// read the row
 	d, e := rt1.Read(1, true)
 	if e != nil {
 		t.Errorf("unexpected error reading type check case")
 		return
 	}
+	// check output
 	for j := 0; j < len(field); j++ {
 		val := d[0][col[j]]
 		switch base[j] {
@@ -213,4 +228,56 @@ func TestReader_Read(t *testing.T) {
 			}
 		}
 	}
+}
+
+type wstr struct {
+	buf string
+}
+
+func (w *wstr) Close() error {
+	return nil
+}
+func (w *wstr) Write(b []byte) (n int, err error) {
+	w.buf = w.buf + string(b)
+	return len(b), nil
+}
+
+func (w *wstr) String() string {
+	return string(w.buf)
+}
+
+func TestWriter_Export(t *testing.T) {
+	var con chutils.Connect
+
+	f := &wstr{""}
+	wtr := NewWriter(f, "A", &con, ",", "\n", "table")
+
+	input := []string{"a,b\n1,2\n3,4\n5,6\n7,8\n9,19\n"}
+
+	result := "'1','2'\n'3','4'\n'5','6'\n'7','8'\n'9','19'\n"
+
+	rt := &rstr{*strings.NewReader(input[0])}
+	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
+	if e := rt1.Init(); e != nil {
+		t.Errorf("Init failed")
+		return
+	}
+	chutils.Export(rt1, wtr)
+	if result != f.buf {
+		t.Errorf("expected %s got %s", result, f.buf)
+	}
+
+	// once we specify the type of a as ChInt, the single quote goes away
+	result = "1,'2'\n3,'4'\n5,'6'\n7,'8'\n9,'19'\n"
+	rt1.Reset()
+	fd := rt1.TableSpec.FieldDefs[0]
+	fd.ChSpec.Base = chutils.ChInt
+	fd.ChSpec.Length = 16
+	f = &wstr{""}
+	wtr = NewWriter(f, "A", &con, ",", "\n", "table")
+	chutils.Export(rt1, wtr)
+	if result != f.buf {
+		t.Errorf("expected %s got %s", result, f.buf)
+	}
+
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // TODO: rune vs string
-// TODO: make Separator, EOL, Quote methods?
+// TODO try embedding io.ReadSeekCloser
 
 // Reader is a Reader that satisfies chutils Input interface. It reads files.
 type Reader struct {
@@ -29,11 +29,16 @@ type Reader struct {
 	rdr       *bufio.Reader     // rdr is encoding/file package reader that reads from rws
 	filename  string            // filename is source we are reading from
 	rws       io.ReadSeekCloser // rws is the interface to source of data
+	bufSize   int
 }
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune, eol rune, quote rune, width int, skip int, maxRead int, rws io.ReadSeekCloser) *Reader {
-	r := bufio.NewReader(rws)
+func NewReader(filename string, separator rune, eol rune, quote rune, width int, skip int, maxRead int,
+	rws io.ReadSeekCloser, bufSize int) *Reader {
+	if bufSize == 0 {
+		bufSize = 4096
+	}
+	r := bufio.NewReaderSize(rws, bufSize)
 
 	return &Reader{
 		Separator: separator,
@@ -47,6 +52,7 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 		rdr:       r,
 		filename:  filename,
 		rws:       rws,
+		bufSize:   bufSize,
 	}
 }
 
@@ -61,14 +67,14 @@ func (csvr *Reader) Close() error {
 // Reset sets the file pointer to the start of the file
 func (csvr *Reader) Reset() {
 	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.rws)
+	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
 	csvr.RowsRead = 0
 	return
 }
 
 func (csvr *Reader) Seek(lineNo int) error {
 	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.rws)
+	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
 	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
 		csvr.RowsRead++
@@ -81,7 +87,7 @@ func (csvr *Reader) Seek(lineNo int) error {
 
 func (csvr *Reader) CountLines() (numLines int, err error) {
 	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReader(csvr.rws)
+	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
 	defer csvr.Reset()
 
 	numLines = 0
@@ -260,7 +266,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 		if ind == nRdrs-1 {
 			np = 0
 		}
-		x := NewReader(rdr0.filename, rdr0.Separator, rdr0.EOL, rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh)
+		x := NewReader(rdr0.filename, rdr0.Separator, rdr0.EOL, rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
 		x.TableSpec = rdr0.TableSpec
 		if err = x.Seek(start); err != nil {
 			return
