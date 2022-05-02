@@ -27,7 +27,6 @@ func NewReader(sql string, conn *chutils.Connect) *Reader {
 		RowsRead: 0,
 		data:     nil,
 		TableSpec: &chutils.TableDef{
-			//			Name:      "",
 			Key:       "",
 			Engine:    chutils.MergeTree,
 			FieldDefs: nil,
@@ -36,17 +35,16 @@ func NewReader(sql string, conn *chutils.Connect) *Reader {
 }
 
 func (rdr *Reader) Init() error {
-
+	var rows *sql.Rows
 	if rdr.Sql == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
 	qry := "SELECT * FROM (" + rdr.Sql + ") LIMIT 1"
 	rows, err := rdr.conn.Query(qry)
-	defer rows.Close()
-
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	ct, err := rows.ColumnTypes()
 	if err != nil {
 		return nil
