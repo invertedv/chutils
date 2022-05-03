@@ -250,7 +250,7 @@ func TestWriter_Export(t *testing.T) {
 	var con chutils.Connect
 
 	f := &wstr{""}
-	wtr := NewWriter(f, "A", &con, ",", "\n", "table")
+	wtr := NewWriter(f, "A", &con, ',', '\n', "table")
 
 	input := []string{"a,b\n1,2\n3,4\n5,6\n7,8\n9,19\n"}
 
@@ -274,10 +274,9 @@ func TestWriter_Export(t *testing.T) {
 	fd.ChSpec.Base = chutils.ChInt
 	fd.ChSpec.Length = 16
 	f = &wstr{""}
-	wtr = NewWriter(f, "A", &con, ",", "\n", "table")
+	wtr = NewWriter(f, "A", &con, ',', '\n', "table")
 	chutils.Export(rt1, wtr)
 	if result != f.buf {
 		t.Errorf("expected %s got %s", result, f.buf)
 	}
-
 }

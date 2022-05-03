@@ -7,8 +7,8 @@
 //   - Concurrent execution of table loading
 package chutils
 
-//TODO: add read and write functions to TableDefs -- JSON? yes? no?
 //TODO: add another slice of FieldDefs that are calculated fields
+//TODO: do I need file format?
 
 import (
 	"database/sql"
@@ -34,11 +34,13 @@ var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
-	Reset()                                                  // Reset to beginning of source
+	Reset() error                                            // Reset to beginning of source
 	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source
 	Seek(lineNo int) error                                   // Seek moves to lineNo in source
 	Name() string                                            // Name of input (file, table, etc)
 	Close() error                                            // Close the source
+	Separator() rune
+	EOL() rune
 }
 
 // The Output interface specifies requirements for writing data.
@@ -46,8 +48,8 @@ type Output interface {
 	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written
 	Name() string                      // Name of output (file, table)
 	Insert() error                     // Inserts into ClickHouse Table
-	Separator() string                 // Separator returns the field separator
-	EOL() string                       // EOL returns the End-of-line character
+	Separator() rune                   // Separator returns the field separator
+	EOL() rune                         // EOL returns the End-of-line character
 	Close() error                      // Close writer
 }
 
@@ -93,8 +95,8 @@ const (
 )
 
 //go:generate stringer -type=ErrType
-func (e ErrType) Error() string {
-	return e.String()
+func (i ErrType) Error() string {
+	return i.String()
 }
 
 func Wrapper(e error, text string) error {
@@ -235,9 +237,9 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 			return
 		}
 		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, ok_low := l.LowLimit.(float64)
-		high, ok_high := l.HighLimit.(float64)
-		if ok_low && ok_high {
+		low, okLow := l.LowLimit.(float64)
+		high, okHigh := l.HighLimit.(float64)
+		if okLow && okHigh {
 			// Do range check
 			if val >= low && val <= high {
 				return
@@ -248,9 +250,9 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 			return
 		}
 		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, ok_low := l.LowLimit.(int)
-		high, ok_high := l.HighLimit.(int)
-		if ok_low && ok_high {
+		low, okLow := l.LowLimit.(int)
+		high, okHigh := l.HighLimit.(int)
+		if okLow && okHigh {
 			// Do range check
 			if val >= low && val <= high {
 				return
@@ -291,7 +293,8 @@ func FindType(newVal string, target *ChField) (res ChType) {
 			res = ChInt
 		}
 		// date?
-		if _, _, err := FindFormat(newVal); err == nil {
+		if dfmt, _, err := FindFormat(newVal); err == nil {
+			target.DateFormat = dfmt
 			res = ChDate
 		}
 	}
@@ -308,11 +311,11 @@ type Status int
 
 // Field Validation Status enum type
 const (
-	Pending    Status = 0 + iota // Pending means the validation status is not determined
-	ValueFail                    // ValueFail: Value is illegal
-	TypeFail                     // TypeFail: value cannot be coerced to correct type
-	Calculated                   // Calculated: value is calculated from other fields
-	Pass                         // Pass: Value is OK
+	VPending    Status = 0 + iota // Pending means the validation status is not determined
+	VValueFail                    // ValueFail: Value is illegal
+	VTypeFail                     // TypeFail: value cannot be coerced to correct type
+	VCalculated                   // Calculated: value is calculated from other fields
+	VPass                         // Pass: Value is OK
 )
 
 //go:generate stringer -type=Status
@@ -331,31 +334,30 @@ type FieldDef struct {
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}, td *TableDef, r Row, s Status) (outValue interface{}, status Status) {
-	status = Pass
+	status = VPass
 	outValue, ok := fd.ChSpec.Converter(inValue)
 	if !ok {
-		status = TypeFail
+		status = VTypeFail
 		outValue = fd.Missing
 		return
 	}
 
-	// TODO: length check to include int, float, change Missing to Max value for length
 	if fd.Legal.Check(outValue) {
 		return
 	}
-	if fd.Calculator != nil && s != Calculated {
+	if fd.Calculator != nil && s != VCalculated {
 		hold := outValue
-		outValue, status = fd.Validator(fd.Calculator(td, r), td, r, Calculated)
+		outValue, status = fd.Validator(fd.Calculator(td, r), td, r, VCalculated)
 		// see if estimated value is legal
-		if status == Pass {
-			status = Calculated
+		if status == VPass {
+			status = VCalculated
 			return
 		}
 		// if not, put back original value and Fail
 		outValue = hold
 	}
 	outValue = fd.Missing
-	status = ValueFail
+	status = VValueFail
 	return
 }
 
@@ -392,7 +394,9 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 // Impute looks at the data from Input and builds the FieldDefs.
 // It requires each field in rdr to come in as string.
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
-	rdr.Reset()
+	if e := rdr.Reset(); e != nil {
+		return e
+	}
 	defer rdr.Reset()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
@@ -467,11 +471,11 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
 		switch fd.ChSpec.Base {
 		case ChInt:
 			// Convert LowLimit, HighLimit to int
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int(0), int(0)
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0, 0
 			//				nil, int(counts[ind].legal.LowLimit.(float64)), int(counts[ind].legal.HighLimit.(float64))
 		case ChFloat:
 			// Some values may convert to int in the file -- these could also be floats
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, float64(0.0), float64(0.0)
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
 			//				nil, counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
 		default:
 			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
@@ -521,17 +525,6 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	return err
 }
 
-// FileFormat enum has supported file types for bulk insert
-type FileFormat int
-
-const (
-	CSV FileFormat = 0 + iota
-	CSVWithNames
-	TabSeparated
-)
-
-//go:generate stringer -type=FileFormat
-
 // Export transfers the contents of rdr to wrtr.
 func Export(rdr Input, wrtr Output) error {
 
@@ -550,15 +543,18 @@ func Export(rdr Input, wrtr Output) error {
 		}
 		line := make([]byte, 0)
 		for c := 0; c < len(data[0]); c++ {
-			char := wrtr.Separator() // separator
+			char := string(wrtr.Separator())
 			if c == len(data[0])-1 {
-				char = wrtr.EOL() //eol
+				char = ""
+				if wrtr.EOL() != 0 {
+					char = string(wrtr.EOL())
+				}
 			}
 			switch v := data[0][c].(type) {
 			case string:
 				line = append(line, []byte(fmt.Sprintf("'%s'%s", v, char))...)
 			case time.Time:
-				line = append(line, []byte(fmt.Sprintf("%s%s", v.Format("2006-01-02"), char))...)
+				line = append(line, []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))...)
 			default:
 				line = append(line, []byte(fmt.Sprintf("%v%s", v, char))...)
 			}

@@ -131,7 +131,9 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 			t[ind] = new(sql.RawBytes)
 		}
 		if !rdr.data.Next() {
-			rdr.Reset()
+			if e := rdr.Reset(); e != nil {
+				return nil, e
+			}
 			return data, io.EOF
 		}
 		rdr.RowsRead++
@@ -149,7 +151,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 		}
 		if validate && rdr.TableSpec.FieldDefs != nil {
 			for ind := 0; ind < ncols; ind++ {
-				outValue, _ := rdr.TableSpec.FieldDefs[ind].Validator(row[ind], rdr.TableSpec, row, chutils.Pending)
+				outValue, _ := rdr.TableSpec.FieldDefs[ind].Validator(row[ind], rdr.TableSpec, row, chutils.VPending)
 				row[ind] = outValue
 			}
 		}
@@ -158,16 +160,18 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 	return
 }
 
-func (rdr *Reader) Reset() {
+func (rdr *Reader) Reset() error {
 	if rdr.data != nil {
-		rdr.data.Close()
+		if e := rdr.data.Close(); e != nil {
+			return e
+		}
 	}
 	var e error
 	if rdr.data, e = rdr.conn.Query(rdr.Sql); e != nil {
-		return
+		return e
 	}
 	rdr.RowsRead = 0
-	return
+	return nil
 }
 
 func (rdr *Reader) CountLines() (numLines int, err error) {
@@ -188,7 +192,9 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 }
 
 func (rdr *Reader) Seek(lineNo int) error {
-	rdr.Reset()
+	if err := rdr.Reset(); err != nil {
+		return err
+	}
 	for cnt := 0; cnt < lineNo-1; cnt++ {
 		if !rdr.data.Next() {
 			return chutils.Wrapper(chutils.ErrSQL, "seek past end of table")
@@ -217,10 +223,18 @@ func (rdr *Reader) Insert(table string) error {
 	return nil
 }
 
+func (rdr *Reader) Separator() rune {
+	return 0
+}
+
+func (rdr *Reader) EOL() rune {
+	return 0
+}
+
 type Writer struct {
 	Table     string
-	separator string
-	eol       string
+	separator rune
+	eol       rune
 	conn      *chutils.Connect
 	hold      []byte
 }
@@ -234,11 +248,11 @@ func (w *Writer) Write(b []byte) (n int, err error) {
 	return n, nil
 }
 
-func (w *Writer) Separator() string {
+func (w *Writer) Separator() rune {
 	return w.separator
 }
 
-func (w *Writer) EOL() string {
+func (w *Writer) EOL() rune {
 	return w.eol
 }
 
@@ -246,7 +260,7 @@ func (w *Writer) Insert() error {
 	if w.Table == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no table name")
 	}
-	qry := fmt.Sprintf("Insert into %s Values", w.Table) + string(w.hold) + ")"
+	qry := fmt.Sprintf("INSERT INTO %s VALUES", w.Table) + string(w.hold) + ")"
 	_, err := w.conn.Exec(qry)
 	return err
 }
@@ -266,8 +280,8 @@ func NewWriter(table string, conn *chutils.Connect) *Writer {
 	return &Writer{Table: table,
 		conn:      conn,
 		hold:      append(make([]byte, 0), '('),
-		separator: ",",
-		eol:       "",
+		separator: ',',
+		eol:       0,
 	}
 }
 

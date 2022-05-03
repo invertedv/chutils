@@ -13,19 +13,16 @@ import (
 	"time"
 )
 
-// TODO: rune vs string
-// TODO try embedding io.ReadSeekCloser
-
 // Reader is a Reader that satisfies chutils Input interface. It reads files.
 type Reader struct {
-	Separator rune              // Separator between fields in the file
 	Skip      int               // Skip is the # of rows to skip in the file
 	RowsRead  int               // RowsRead is current count of rows read from the file (includes header)
 	MaxRead   int               // MaxRead is the maximum number of rows to read
 	TableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing the fields in the source.  Can be supplied or derived from the file
-	EOL       rune              // EOL is the end of line character
 	Width     int               // Width is the line width for flat files
 	Quote     rune              // Quote is the optional quote around strings that contain the Separator
+	eol       rune              // EOL is the end of line character
+	separator rune              // Separator between fields in the file
 	rdr       *bufio.Reader     // rdr is encoding/file package reader that reads from rws
 	filename  string            // filename is source we are reading from
 	rws       io.ReadSeekCloser // rws is the interface to source of data
@@ -41,19 +38,27 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 	r := bufio.NewReaderSize(rws, bufSize)
 
 	return &Reader{
-		Separator: separator,
 		Skip:      skip,
 		RowsRead:  0,
 		MaxRead:   maxRead,
 		TableSpec: &chutils.TableDef{},
-		EOL:       eol,
 		Width:     width,
 		Quote:     quote,
+		eol:       eol,
+		separator: separator,
 		rdr:       r,
 		filename:  filename,
 		rws:       rws,
 		bufSize:   bufSize,
 	}
+}
+
+func (csvr *Reader) Separator() rune {
+	return csvr.separator
+}
+
+func (csvr *Reader) EOL() rune {
+	return csvr.eol
 }
 
 func (csvr *Reader) Name() string {
@@ -65,11 +70,11 @@ func (csvr *Reader) Close() error {
 }
 
 // Reset sets the file pointer to the start of the file
-func (csvr *Reader) Reset() {
+func (csvr *Reader) Reset() error {
 	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
+	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize)
 	csvr.RowsRead = 0
-	return
+	return nil
 }
 
 func (csvr *Reader) Seek(lineNo int) error {
@@ -78,7 +83,7 @@ func (csvr *Reader) Seek(lineNo int) error {
 	csvr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
 		csvr.RowsRead++
-		if _, err := csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
+		if _, err := csvr.rdr.ReadString(byte(csvr.EOL())); err != nil {
 			return chutils.Wrapper(chutils.ErrSeek, fmt.Sprintf("line %d", ind))
 		}
 	}
@@ -93,7 +98,7 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 	numLines = 0
 	err = nil
 	for e := error(nil); e != io.EOF; {
-		if _, e = csvr.rdr.ReadString(byte(csvr.EOL)); e != nil {
+		if _, e = csvr.rdr.ReadString(byte(csvr.EOL())); e != nil {
 			if e != io.EOF {
 				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
@@ -136,13 +141,15 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	err = nil
 	if csvr.Width == 0 {
 		var l string
-		if l, err = csvr.rdr.ReadString(byte(csvr.EOL)); err != nil {
+		if l, err = csvr.rdr.ReadString(byte(csvr.EOL())); err != nil {
 			return nil, err
 		}
 		// No quote string, so just split on Separator.
 		if csvr.Quote == 0 {
-			l = strings.Replace(l, string(csvr.EOL), "", 1)
-			line = strings.Split(l, string(csvr.Separator))
+			// drop EOL
+			l = strings.Replace(l, string(csvr.EOL()), "", 1)
+			line = strings.Split(l, string(csvr.Separator()))
+			// remove leading/trailing blanks
 			for ind, l := range line {
 				line[ind] = strings.Trim(l, " ")
 			}
@@ -154,11 +161,11 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 		ind := 0
 		for _, ch := range l {
 			switch ch {
-			case csvr.EOL:
+			case csvr.EOL():
 				line = append(line, strings.Trim(string(f[0:ind]), " "))
 			case csvr.Quote:
 				haveQuote = !haveQuote
-			case csvr.Separator:
+			case csvr.Separator():
 				if haveQuote {
 					f[ind] = ch
 					ind++
@@ -230,7 +237,7 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		}
 		if validate {
 			for j := 0; j < numFields; j++ {
-				val, _ := csvr.TableSpec.FieldDefs[j].Validator(outrow[j], csvr.TableSpec, outrow, chutils.Pending)
+				val, _ := csvr.TableSpec.FieldDefs[j].Validator(outrow[j], csvr.TableSpec, outrow, chutils.VPending)
 				outrow[j] = val
 			}
 		}
@@ -258,7 +265,6 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 	start := 1
 	for ind := 0; ind < nRdrs; ind++ {
 		var fh *os.File
-
 		if fh, err = os.Open(rdr0.filename); err != nil {
 			return
 		}
@@ -266,7 +272,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 		if ind == nRdrs-1 {
 			np = 0
 		}
-		x := NewReader(rdr0.filename, rdr0.Separator, rdr0.EOL, rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
+		x := NewReader(rdr0.filename, rdr0.Separator(), rdr0.EOL(), rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
 		x.TableSpec = rdr0.TableSpec
 		if err = x.Seek(start); err != nil {
 			return
@@ -280,8 +286,8 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 type Writer struct {
 	io.WriteCloser
 	name      string
-	separator string           // separator is the field separator
-	eol       string           // eol is the end-of-line character
+	separator rune             // separator is the field separator
+	eol       rune             // eol is the end-of-line character
 	conn      *chutils.Connect // Con is the ClickHouse connect info (needed for Insert)
 	Table     string           // Table is the table to load created file to (needed for Insert)
 }
@@ -292,9 +298,9 @@ func (w *Writer) Insert() error {
 		cmd = fmt.Sprintf("%s --password=%s", cmd, w.conn.Password)
 	}
 	cmd = fmt.Sprintf("%s %s ", cmd, "")
-	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, w.Separator())
+	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(w.Separator()))
 	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, w.Table, "CSV", w.Name())
-	// running clickhouse-client as a command chokes on --query
+	// running clickhouse-client as a command bc issuing the command itself chokes on --query element
 	c := exec.Command("bash", "-c", cmd)
 	err := c.Run()
 	return err
@@ -304,19 +310,19 @@ func (w *Writer) Name() string {
 	return w.name
 }
 
-func (w *Writer) EOL() string {
+func (w *Writer) EOL() rune {
 	return w.eol
 }
 
-func (w *Writer) Separator() string {
+func (w *Writer) Separator() rune {
 	return w.separator
 }
 
-func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator string, eol string, table string) *Writer {
+func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator rune, eol rune, table string) *Writer {
 	return &Writer{f, name, separator, eol, con, table}
 }
 
-func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator string, eol string, table string) (wrtrs []chutils.Output, err error) {
+func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator rune, eol rune, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 
 	wrtrs = nil
