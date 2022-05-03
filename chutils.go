@@ -393,11 +393,12 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 
 // Impute looks at the data from Input and builds the FieldDefs.
 // It requires each field in rdr to come in as string.
-func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
-	if e := rdr.Reset(); e != nil {
-		return e
+func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error) {
+	err = nil
+	if err = rdr.Reset(); err != nil {
+		return
 	}
-	defer rdr.Reset()
+	defer func() { err = rdr.Reset() }()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
 		floats int
@@ -482,7 +483,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) error {
 		}
 
 	}
-	return nil
+	return
 }
 
 // Create func builds and issues CREATE TABLE ClickHouse statement

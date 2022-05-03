@@ -93,7 +93,7 @@ func (csvr *Reader) Seek(lineNo int) error {
 func (csvr *Reader) CountLines() (numLines int, err error) {
 	_, _ = csvr.rws.Seek(0, 0)
 	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
-	defer csvr.Reset()
+	defer func() { err = csvr.Reset() }()
 
 	numLines = 0
 	err = nil
@@ -113,7 +113,9 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 // Init initialize FieldDefs slice of TableDef from header row of input
 func (csvr *Reader) Init() error {
 	if csvr.RowsRead != 0 {
-		csvr.Reset()
+		if e := csvr.Reset(); e != nil {
+			return e
+		}
 	}
 	row, err := csvr.GetLine()
 	csvr.RowsRead++
@@ -265,14 +267,14 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 	start := 1
 	for ind := 0; ind < nRdrs; ind++ {
 		var fh *os.File
-		if fh, err = os.Open(rdr0.filename); err != nil {
+		if fh, err = os.Open(rdr0.Name()); err != nil {
 			return
 		}
 		np := start + nper - 1
 		if ind == nRdrs-1 {
 			np = 0
 		}
-		x := NewReader(rdr0.filename, rdr0.Separator(), rdr0.EOL(), rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
+		x := NewReader(rdr0.Name(), rdr0.Separator(), rdr0.EOL(), rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
 		x.TableSpec = rdr0.TableSpec
 		if err = x.Seek(start); err != nil {
 			return

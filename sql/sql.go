@@ -12,14 +12,14 @@ import (
 )
 
 type Reader struct {
-	Sql      string // Sql is the SELECT string.  It does not have an INSERT
-	conn     *chutils.Connect
-	RowsRead int
-	//	Table string
-	data      *sql.Rows
-	TableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file
+	Sql       string            // Sql is the SELECT string.  It does not have an INSERT
+	RowsRead  int               // RowsRead is the number of rows read so far
+	TableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
+	conn      *chutils.Connect  // conn is connector to ClickHouse
+	data      *sql.Rows         // data is the output of executing Reader.Sql
 }
 
+// NewReader creates a new reader
 func NewReader(sql string, conn *chutils.Connect) *Reader {
 	return &Reader{
 		Sql:      sql,
@@ -34,8 +34,10 @@ func NewReader(sql string, conn *chutils.Connect) *Reader {
 	}
 }
 
+// Init initializes Reader.TableDef by looking at the output of the query
 func (rdr *Reader) Init() error {
 	var rows *sql.Rows
+	var e error = nil
 	if rdr.Sql == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
@@ -44,7 +46,7 @@ func (rdr *Reader) Init() error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { e = rows.Close() }()
 	ct, err := rows.ColumnTypes()
 	if err != nil {
 		return nil
@@ -109,9 +111,11 @@ func (rdr *Reader) Init() error {
 		fds[ind] = fd
 	}
 	rdr.TableSpec.FieldDefs = fds
-	return nil
+	return e
 }
 
+// Read reads nTarget rows.  If validate is true, the fields are validated against the TableDef.
+// If validate is false, the fields are returned as strings.
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err error) {
 	data = nil
 	if rdr.data == nil {
@@ -160,6 +164,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 	return
 }
 
+// Reset resets the result set, so subsequent reads start with the first record.
 func (rdr *Reader) Reset() error {
 	if rdr.data != nil {
 		if e := rdr.data.Close(); e != nil {
@@ -174,6 +179,7 @@ func (rdr *Reader) Reset() error {
 	return nil
 }
 
+// CountLines returns the number of rows in the result set.
 func (rdr *Reader) CountLines() (numLines int, err error) {
 	var res *sql.Rows
 	numLines = 0
@@ -181,7 +187,7 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	if res, err = rdr.conn.Query(qry); err != nil {
 		return
 	}
-	defer res.Close()
+	defer func() { err = res.Close() }()
 	for res.Next() {
 		if err = res.Scan(&numLines); err != nil {
 			numLines = 0
@@ -191,6 +197,7 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	return
 }
 
+// Seek moves to the lineNo record of the result set.  The next read will start there.
 func (rdr *Reader) Seek(lineNo int) error {
 	if err := rdr.Reset(); err != nil {
 		return err
@@ -203,6 +210,7 @@ func (rdr *Reader) Seek(lineNo int) error {
 	return nil
 }
 
+// Name -- SQL readers don't need a name but this is need to satisfy the interface.
 func (rdr *Reader) Name() string {
 	return "N/A"
 }
