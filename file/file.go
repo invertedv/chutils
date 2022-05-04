@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Reader is a Reader that satisfies chutils Input interface. It reads files.
+// Reader implements chutils.Input interface.
 type Reader struct {
 	Skip      int               // Skip is the # of rows to skip in the file
 	RowsRead  int               // RowsRead is current count of rows read from the file (includes header)
@@ -53,18 +53,22 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 	}
 }
 
+// Separator returns field separator rune
 func (csvr *Reader) Separator() rune {
 	return csvr.separator
 }
 
+// EOL returns end-of-line rune
 func (csvr *Reader) EOL() rune {
 	return csvr.eol
 }
 
+// Name returns the name of the file being read
 func (csvr *Reader) Name() string {
 	return csvr.filename
 }
 
+// Close closes the underlying ReadWriteSeeker
 func (csvr *Reader) Close() error {
 	return csvr.rws.Close()
 }
@@ -77,6 +81,7 @@ func (csvr *Reader) Reset() error {
 	return nil
 }
 
+// Seek points the reader to lineNo line in the source data.
 func (csvr *Reader) Seek(lineNo int) error {
 	_, _ = csvr.rws.Seek(0, 0)
 	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
@@ -90,6 +95,7 @@ func (csvr *Reader) Seek(lineNo int) error {
 	return nil
 }
 
+// CountLines returns the number of rows in the source data.  This does not include any header rows.
 func (csvr *Reader) CountLines() (numLines int, err error) {
 	_, _ = csvr.rws.Seek(0, 0)
 	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
@@ -285,6 +291,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 	return
 }
 
+// Writer implements chutils.Output
 type Writer struct {
 	io.WriteCloser
 	name      string
@@ -294,6 +301,7 @@ type Writer struct {
 	Table     string           // Table is the table to load created file to (needed for Insert)
 }
 
+// Insert inserts data into ClickHouse via the clickhouse-client program.
 func (w *Writer) Insert() error {
 	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", w.conn.Host, w.conn.User)
 	if w.conn.Password != "" {
@@ -308,22 +316,27 @@ func (w *Writer) Insert() error {
 	return err
 }
 
+// Name returns the name of the ClickHouse table to insert to
 func (w *Writer) Name() string {
 	return w.name
 }
 
+// EOL returns the end-of-line rune
 func (w *Writer) EOL() rune {
 	return w.eol
 }
 
+// Separators returns the field separator rune
 func (w *Writer) Separator() rune {
 	return w.separator
 }
 
+// NewWriter creates a new Writer instance
 func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator rune, eol rune, table string) *Writer {
 	return &Writer{f, name, separator, eol, con, table}
 }
 
+// Wrtrs creates a slice of Writers suitable for chutils.Concur.
 func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator rune, eol rune, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 

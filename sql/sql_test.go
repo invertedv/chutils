@@ -52,7 +52,6 @@ func TestReader_Init(t *testing.T) {
 		_, fd, _ := rdr.TableSpec.Get(resNames[j])
 		actNames = append(actNames, fd.Name)
 		actBases = append(actBases, fd.ChSpec.Base)
-		fmt.Println(rdr.TableSpec.FieldDefs[j].Name)
 	}
 	assert.Equal(t, resNames, actNames)
 	assert.Equal(t, resBases, actBases)
@@ -224,7 +223,6 @@ func TestWriter_Insert(t *testing.T) {
 			t.Errorf("unexpected error writing")
 		}
 	}
-	fmt.Println(string(wrtr.hold))
 
 	qry := fmt.Sprintf("^INSERT INTO %s VALUES", table)
 	for ind := 0; ind < len(input); ind++ {

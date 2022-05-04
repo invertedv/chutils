@@ -11,20 +11,23 @@ import (
 	"time"
 )
 
+// Reader implements chutils.Input interface.
 type Reader struct {
 	Sql       string            // Sql is the SELECT string.  It does not have an INSERT
 	RowsRead  int               // RowsRead is the number of rows read so far
 	TableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
+	Name      string            // Name is the name of the output table created by Insert()
 	conn      *chutils.Connect  // conn is connector to ClickHouse
 	data      *sql.Rows         // data is the output of executing Reader.Sql
 }
 
-// NewReader creates a new reader
+// NewReader creates a new reader.
 func NewReader(sql string, conn *chutils.Connect) *Reader {
 	return &Reader{
 		Sql:      sql,
 		conn:     conn,
 		RowsRead: 0,
+		Name:     "",
 		data:     nil,
 		TableSpec: &chutils.TableDef{
 			Key:       "",
@@ -164,7 +167,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 	return
 }
 
-// Reset resets the result set, so subsequent reads start with the first record.
+// Reset resets the result set. The next read returns the first record.
 func (rdr *Reader) Reset() error {
 	if rdr.data != nil {
 		if e := rdr.data.Close(); e != nil {
@@ -210,11 +213,7 @@ func (rdr *Reader) Seek(lineNo int) error {
 	return nil
 }
 
-// Name -- SQL readers don't need a name but this is need to satisfy the interface.
-func (rdr *Reader) Name() string {
-	return "N/A"
-}
-
+// Close closes the result set
 func (rdr *Reader) Close() error {
 	if rdr.data == nil {
 		return nil
@@ -223,30 +222,26 @@ func (rdr *Reader) Close() error {
 	return rdr.data.Close()
 }
 
-func (rdr *Reader) Insert(table string) error {
-	qry := fmt.Sprintf("INSERT INTO %s %s", table, rdr.Sql)
+// Insert executes Reader.Sql and inserts the result into Reader.Name
+func (rdr *Reader) Insert() error {
+	qry := fmt.Sprintf("INSERT INTO %s %s", rdr.Name, rdr.Sql)
 	if _, err := rdr.conn.Exec(qry); err != nil {
 		log.Fatalln(err)
 	}
 	return nil
 }
 
-func (rdr *Reader) Separator() rune {
-	return 0
-}
-
-func (rdr *Reader) EOL() rune {
-	return 0
-}
-
+// Writer implements chutils.Output
 type Writer struct {
-	Table     string
-	separator rune
-	eol       rune
-	conn      *chutils.Connect
-	hold      []byte
+	Table     string           // Table is the output table
+	separator rune             // separator for values.  This is set to ','
+	eol       rune             // EOL. This is set to 0.
+	conn      *chutils.Connect // conn is the connector to ClickHouse
+	hold      []byte           // holds the Value statements as they are built.
 }
 
+// Write writes the byte slice to Writer.hold. The byte slice is a single row of the output
+// table with the fields being comma separated.
 func (w *Writer) Write(b []byte) (n int, err error) {
 	n = len(b)
 	if len(w.hold) > 1 {
@@ -256,14 +251,17 @@ func (w *Writer) Write(b []byte) (n int, err error) {
 	return n, nil
 }
 
+// Separator returns a comma rune.  This method is needed by chutils.Export.
 func (w *Writer) Separator() rune {
 	return w.separator
 }
 
+// EOL returns 0.  This method is needed by chutils.Export.
 func (w *Writer) EOL() rune {
 	return w.eol
 }
 
+// Insert executes an Insert query -- the values must have been built using Writer.Write
 func (w *Writer) Insert() error {
 	if w.Table == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no table name")
@@ -273,12 +271,14 @@ func (w *Writer) Insert() error {
 	return err
 }
 
+// Close closes the work on the Values so far--that is, it empties the buffer.
 func (w *Writer) Close() error {
 	w.hold = make([]byte, 0)
 	w.hold = append(w.hold, '(')
 	return nil
 }
 
+// Name returns the name of the table created by Insert.
 func (w *Writer) Name() string {
 	return w.Table
 }
@@ -293,6 +293,7 @@ func NewWriter(table string, conn *chutils.Connect) *Writer {
 	}
 }
 
+// Wrtrs creates an array of writers suitable for chutils.Concur
 func Wrtrs(table string, nWrtr int, conn *chutils.Connect) (wrtrs []chutils.Output, err error) {
 
 	wrtrs = nil

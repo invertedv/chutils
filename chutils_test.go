@@ -45,20 +45,8 @@ func (m *mockRead) Seek(lineNo int) error {
 	return nil
 }
 
-func (m *mockRead) Name() string {
-	return m.name
-}
-
 func (m *mockRead) Close() error {
 	return nil
-}
-
-func (m *mockRead) Separator() rune {
-	return 0
-}
-
-func (m *mockRead) EOL() rune {
-	return 0
 }
 
 func buildTableDef() TableDef {

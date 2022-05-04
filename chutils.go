@@ -8,7 +8,6 @@
 package chutils
 
 //TODO: add another slice of FieldDefs that are calculated fields
-//TODO: do I need file format?
 
 import (
 	"database/sql"
@@ -37,10 +36,7 @@ type Input interface {
 	Reset() error                                            // Reset to beginning of source
 	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source
 	Seek(lineNo int) error                                   // Seek moves to lineNo in source
-	Name() string                                            // Name of input (file, table, etc)
 	Close() error                                            // Close the source
-	Separator() rune
-	EOL() rune
 }
 
 // The Output interface specifies requirements for writing data.
@@ -173,8 +169,11 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 			if err != nil {
 				return nil, false
 			}
-		case int:
-			fmt.Println("FILL ME IN -- check will fit in type length")
+		case int, float32, int8, int16, int32, int64:
+			outValue, err = strconv.ParseFloat(fmt.Sprintf("%d", x), t.Length)
+		case float64:
+		default:
+			return nil, false
 		}
 	case ChInt:
 		switch x := (inValue).(type) {
@@ -184,20 +183,33 @@ func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) 
 				return nil, false
 			}
 			outValue = int(outValue.(int64))
-		case float64, float32:
-			fmt.Println("FILL ME IN")
+		case float64, float32, int8, int16, int32, int64:
+			outValue, err = strconv.ParseInt(fmt.Sprintf("%v", x), 10, t.Length)
+			if err != nil {
+				return nil, false
+			}
+			outValue = int(outValue.(int64))
+		case int:
+		default:
+			return nil, false
 		}
 	case ChDate:
 		switch x := (inValue).(type) {
 		case string:
 			var outDate time.Time
 			outDate, err = time.Parse(t.DateFormat, x)
-			outValue = outDate //changed 4/29 outDate.Format("2006-01-02")
+			outValue = outDate
 			if err != nil {
 				return nil, false
 			}
-		case float64, float32:
-			fmt.Println("FILL ME IN")
+		case float64, float32, int, int8, int16, int32, int64:
+			outValue, err = time.Parse(t.DateFormat, fmt.Sprintf("%v", x))
+			if err != nil {
+				return nil, false
+			}
+		case time.Time:
+		default:
+			return nil, false
 		}
 	}
 	return outValue, true
@@ -273,7 +285,9 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 	return
 }
 
-// FindType takes a LegalValues struct and updates it with newVal value.
+// FindType determines the ChType of newVal.  If the target type is already set, this is a noop.
+// Otherwise, the order of precedence is: ChDate, ChInt, ChFloat, ChString.
+// If it is a date, the date format is set in target.
 func FindType(newVal string, target *ChField) (res ChType) {
 
 	// if target != Unknown, then don't try anything
@@ -312,10 +326,10 @@ type Status int
 // Field Validation Status enum type
 const (
 	VPending    Status = 0 + iota // Pending means the validation status is not determined
-	VValueFail                    // ValueFail: Value is illegal
+	VValueFail                    // ValueFail: value is illegal
 	VTypeFail                     // TypeFail: value cannot be coerced to correct type
 	VCalculated                   // Calculated: value is calculated from other fields
-	VPass                         // Pass: Value is OK
+	VPass                         // Pass: value is OK
 )
 
 //go:generate stringer -type=Status
@@ -368,8 +382,8 @@ type TableDef struct {
 	FieldDefs map[int]*FieldDef // Map of fields in the table. The int key is the column order in the table.
 }
 
-// Get returns the FieldDef for field "name", nil if there is not such a field.
-// Since the map is by column order, this is handy to get the field by name.
+// Get returns the FieldDef for field "name".  The FieldDefs map is by column order, so access
+// by field name is needed.
 func (td *TableDef) Get(name string) (int, *FieldDef, error) {
 	for ind, fdx := range td.FieldDefs {
 		if fdx.Name == name {
@@ -391,8 +405,8 @@ func FindFormat(inDate string) (format string, date time.Time, err error) {
 	return "", DateMissing, Wrapper(ErrDateFormat, inDate)
 }
 
-// Impute looks at the data from Input and builds the FieldDefs.
-// It requires each field in rdr to come in as string.
+// Impute looks at the data from Input reader and builds the FieldDefs.
+// It expects each field in rdr to come in as string.
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error) {
 	err = nil
 	if err = rdr.Reset(); err != nil {
@@ -432,6 +446,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 			if fval, ok = data[0][ind].(string); ok != true {
 				return Wrapper(ErrStr, fmt.Sprintf("%v %v", fval, rowCount))
 			}
+			// aggregate results for each field across the rows
 			switch FindType(fval, &td.FieldDefs[ind].ChSpec) {
 			case ChInt:
 				counts[ind].ints++
@@ -471,22 +486,17 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 		}
 		switch fd.ChSpec.Base {
 		case ChInt:
-			// Convert LowLimit, HighLimit to int
 			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0, 0
-			//				nil, int(counts[ind].legal.LowLimit.(float64)), int(counts[ind].legal.HighLimit.(float64))
 		case ChFloat:
-			// Some values may convert to int in the file -- these could also be floats
 			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
-			//				nil, counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
 		default:
 			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
 		}
-
 	}
 	return
 }
 
-// Create func builds and issues CREATE TABLE ClickHouse statement
+// Create builds and issues CREATE TABLE ClickHouse statement. The table created is "table"
 func (td *TableDef) Create(conn *Connect, table string) error {
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", table)
 	if _, err := conn.Exec(qry); err != nil {
@@ -546,9 +556,9 @@ func Export(rdr Input, wrtr Output) error {
 		for c := 0; c < len(data[0]); c++ {
 			char := string(wrtr.Separator())
 			if c == len(data[0])-1 {
-				char = ""
-				if wrtr.EOL() != 0 {
-					char = string(wrtr.EOL())
+				char = string(wrtr.EOL())
+				if wrtr.EOL() == 0 {
+					char = ""
 				}
 			}
 			switch v := data[0][c].(type) {
@@ -566,7 +576,7 @@ func Export(rdr Input, wrtr Output) error {
 	}
 }
 
-// Load reads n lines from rdr, writes them to wrtr and finally inserts the data into table.
+// Load reads lines from rdr, writes them to wrtr and finally Inserts the data into table.
 func Load(rdr Input, wrtr Output) (err error) {
 	err = Export(rdr, wrtr)
 	if err != nil {
@@ -577,7 +587,6 @@ func Load(rdr Input, wrtr Output) (err error) {
 }
 
 // Concur loads a ClickHouse table from an array of Inputs/Outputs concurrently.
-// wrtrs must produce a file that can be bulk imported to ClickHouse.
 func Concur(nWorker int, rdrs []Input, wrtrs []Output,
 	f func(rdr Input, wrtr Output) error) error {
 	start := time.Now()
