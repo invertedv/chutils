@@ -15,13 +15,16 @@ type mockRead struct {
 func (m *mockRead) Read(nTarget int, validate bool) (data []Row, err error) {
 	err = nil
 	data = nil
+	_ = validate // validate tested separately
 	if m.RowsRead < len(m.s) {
-		d := make(Row, 0)
-		for ind := 0; ind < len(m.s[m.RowsRead]); ind++ {
-			d = append(d, m.s[m.RowsRead][ind])
+		for r := 0; r < nTarget; r++ {
+			d := make(Row, 0)
+			for ind := 0; ind < len(m.s[m.RowsRead]); ind++ {
+				d = append(d, m.s[m.RowsRead][ind])
+			}
+			data = append(data, d)
+			m.RowsRead++
 		}
-		data = append(data, d)
-		m.RowsRead++
 		return
 	}
 	return nil, io.EOF

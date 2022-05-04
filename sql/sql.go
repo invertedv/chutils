@@ -242,45 +242,45 @@ type Writer struct {
 
 // Write writes the byte slice to Writer.hold. The byte slice is a single row of the output
 // table with the fields being comma separated.
-func (w *Writer) Write(b []byte) (n int, err error) {
+func (wtr *Writer) Write(b []byte) (n int, err error) {
 	n = len(b)
-	if len(w.hold) > 1 {
-		w.hold = append(w.hold, ')', ',', '(')
+	if len(wtr.hold) > 1 {
+		wtr.hold = append(wtr.hold, ')', ',', '(')
 	}
-	w.hold = append(w.hold, b...)
+	wtr.hold = append(wtr.hold, b...)
 	return n, nil
 }
 
 // Separator returns a comma rune.  This method is needed by chutils.Export.
-func (w *Writer) Separator() rune {
-	return w.separator
+func (wtr *Writer) Separator() rune {
+	return wtr.separator
 }
 
 // EOL returns 0.  This method is needed by chutils.Export.
-func (w *Writer) EOL() rune {
-	return w.eol
+func (wtr *Writer) EOL() rune {
+	return wtr.eol
 }
 
 // Insert executes an Insert query -- the values must have been built using Writer.Write
-func (w *Writer) Insert() error {
-	if w.Table == "" {
+func (wtr *Writer) Insert() error {
+	if wtr.Table == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no table name")
 	}
-	qry := fmt.Sprintf("INSERT INTO %s VALUES", w.Table) + string(w.hold) + ")"
-	_, err := w.conn.Exec(qry)
+	qry := fmt.Sprintf("INSERT INTO %s VALUES", wtr.Table) + string(wtr.hold) + ")"
+	_, err := wtr.conn.Exec(qry)
 	return err
 }
 
 // Close closes the work on the Values so far--that is, it empties the buffer.
-func (w *Writer) Close() error {
-	w.hold = make([]byte, 0)
-	w.hold = append(w.hold, '(')
+func (wtr *Writer) Close() error {
+	wtr.hold = make([]byte, 0)
+	wtr.hold = append(wtr.hold, '(')
 	return nil
 }
 
 // Name returns the name of the table created by Insert.
-func (w *Writer) Name() string {
-	return w.Table
+func (wtr *Writer) Name() string {
+	return wtr.Table
 }
 
 // NewWriter creates a new SQL writer

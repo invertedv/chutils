@@ -54,41 +54,41 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 }
 
 // Separator returns field separator rune
-func (csvr *Reader) Separator() rune {
-	return csvr.separator
+func (rdr *Reader) Separator() rune {
+	return rdr.separator
 }
 
 // EOL returns end-of-line rune
-func (csvr *Reader) EOL() rune {
-	return csvr.eol
+func (rdr *Reader) EOL() rune {
+	return rdr.eol
 }
 
 // Name returns the name of the file being read
-func (csvr *Reader) Name() string {
-	return csvr.filename
+func (rdr *Reader) Name() string {
+	return rdr.filename
 }
 
 // Close closes the underlying ReadWriteSeeker
-func (csvr *Reader) Close() error {
-	return csvr.rws.Close()
+func (rdr *Reader) Close() error {
+	return rdr.rws.Close()
 }
 
 // Reset sets the file pointer to the start of the file
-func (csvr *Reader) Reset() error {
-	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize)
-	csvr.RowsRead = 0
+func (rdr *Reader) Reset() error {
+	_, _ = rdr.rws.Seek(0, 0)
+	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize)
+	rdr.RowsRead = 0
 	return nil
 }
 
 // Seek points the reader to lineNo line in the source data.
-func (csvr *Reader) Seek(lineNo int) error {
-	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
-	csvr.RowsRead = 0
-	for ind := 0; ind < lineNo-1+csvr.Skip; ind++ {
-		csvr.RowsRead++
-		if _, err := csvr.rdr.ReadString(byte(csvr.EOL())); err != nil {
+func (rdr *Reader) Seek(lineNo int) error {
+	_, _ = rdr.rws.Seek(0, 0)
+	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
+	rdr.RowsRead = 0
+	for ind := 0; ind < lineNo-1+rdr.Skip; ind++ {
+		rdr.RowsRead++
+		if _, err := rdr.rdr.ReadString(byte(rdr.EOL())); err != nil {
 			return chutils.Wrapper(chutils.ErrSeek, fmt.Sprintf("line %d", ind))
 		}
 	}
@@ -96,19 +96,19 @@ func (csvr *Reader) Seek(lineNo int) error {
 }
 
 // CountLines returns the number of rows in the source data.  This does not include any header rows.
-func (csvr *Reader) CountLines() (numLines int, err error) {
-	_, _ = csvr.rws.Seek(0, 0)
-	csvr.rdr = bufio.NewReaderSize(csvr.rws, csvr.bufSize) // bufio.NewReader(csvr.rws)
-	defer func() { err = csvr.Reset() }()
+func (rdr *Reader) CountLines() (numLines int, err error) {
+	_, _ = rdr.rws.Seek(0, 0)
+	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
+	defer func() { err = rdr.Reset() }()
 
 	numLines = 0
 	err = nil
 	for e := error(nil); e != io.EOF; {
-		if _, e = csvr.rdr.ReadString(byte(csvr.EOL())); e != nil {
+		if _, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
 			if e != io.EOF {
 				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
-			numLines -= csvr.Skip
+			numLines -= rdr.Skip
 			return
 		}
 		numLines++
@@ -117,14 +117,14 @@ func (csvr *Reader) CountLines() (numLines int, err error) {
 }
 
 // Init initialize FieldDefs slice of TableDef from header row of input
-func (csvr *Reader) Init() error {
-	if csvr.RowsRead != 0 {
-		if e := csvr.Reset(); e != nil {
+func (rdr *Reader) Init() error {
+	if rdr.RowsRead != 0 {
+		if e := rdr.Reset(); e != nil {
 			return e
 		}
 	}
-	row, err := csvr.GetLine()
-	csvr.RowsRead++
+	row, err := rdr.GetLine()
+	rdr.RowsRead++
 	if err != nil {
 		return chutils.Wrapper(chutils.ErrInput, "initial read failed")
 	}
@@ -140,23 +140,23 @@ func (csvr *Reader) Init() error {
 		}
 		fds[ind] = fd
 	}
-	csvr.TableSpec.FieldDefs = fds
+	rdr.TableSpec.FieldDefs = fds
 	return nil
 }
 
 // GetLine returns the next line from Reader and parses it into fields.
-func (csvr *Reader) GetLine() (line []string, err error) {
+func (rdr *Reader) GetLine() (line []string, err error) {
 	err = nil
-	if csvr.Width == 0 {
+	if rdr.Width == 0 {
 		var l string
-		if l, err = csvr.rdr.ReadString(byte(csvr.EOL())); err != nil {
+		if l, err = rdr.rdr.ReadString(byte(rdr.EOL())); err != nil {
 			return nil, err
 		}
 		// No quote string, so just split on Separator.
-		if csvr.Quote == 0 {
+		if rdr.Quote == 0 {
 			// drop EOL
-			l = strings.Replace(l, string(csvr.EOL()), "", 1)
-			line = strings.Split(l, string(csvr.Separator()))
+			l = strings.Replace(l, string(rdr.EOL()), "", 1)
+			line = strings.Split(l, string(rdr.Separator()))
 			// remove leading/trailing blanks
 			for ind, l := range line {
 				line[ind] = strings.Trim(l, " ")
@@ -169,11 +169,11 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 		ind := 0
 		for _, ch := range l {
 			switch ch {
-			case csvr.EOL():
+			case rdr.EOL():
 				line = append(line, strings.Trim(string(f[0:ind]), " "))
-			case csvr.Quote:
+			case rdr.Quote:
 				haveQuote = !haveQuote
-			case csvr.Separator():
+			case rdr.Separator():
 				if haveQuote {
 					f[ind] = ch
 					ind++
@@ -190,21 +190,21 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 	}
 
 	// file has fixed-width structure (flat file)
-	l := make([]byte, csvr.Width)
-	if _, err = io.ReadFull(csvr.rdr, l); err != nil {
+	l := make([]byte, rdr.Width)
+	if _, err = io.ReadFull(rdr.rdr, l); err != nil {
 		if err == io.ErrUnexpectedEOF {
 			return nil, io.EOF
 		}
 		return nil, err
 	}
 	lstr := string(l)
-	if len(lstr) != csvr.Width {
+	if len(lstr) != rdr.Width {
 		return nil, chutils.Wrapper(chutils.ErrFields, "line is wrong width")
 	}
-	line = make([]string, len(csvr.TableSpec.FieldDefs))
+	line = make([]string, len(rdr.TableSpec.FieldDefs))
 	start := 0
 	for ind := 0; ind < len(line); ind++ {
-		w := csvr.TableSpec.FieldDefs[ind].Width
+		w := rdr.TableSpec.FieldDefs[ind].Width
 		line[ind] = lstr[start : start+w]
 		start += w
 	}
@@ -212,31 +212,31 @@ func (csvr *Reader) GetLine() (line []string, err error) {
 }
 
 // Read reads numRow rows from, does type conversion and validation (validate==true)
-func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err error) {
+func (rdr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err error) {
 	var csvrow []string
 
-	if csvr.RowsRead == 0 && csvr.Skip > 0 {
-		for i := 0; i < csvr.Skip; i++ {
-			if _, err = csvr.GetLine(); err != nil {
+	if rdr.RowsRead == 0 && rdr.Skip > 0 {
+		for i := 0; i < rdr.Skip; i++ {
+			if _, err = rdr.GetLine(); err != nil {
 				return nil, chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("failed at row %d", i))
 			}
 		}
 	}
-	numFields := len(csvr.TableSpec.FieldDefs)
+	numFields := len(rdr.TableSpec.FieldDefs)
 	//	csvr.rdr.FieldsPerRecord = numFields
 
 	data = make([]chutils.Row, 0)
 	for rowCount := 1; ; rowCount++ {
-		if csvrow, err = csvr.GetLine(); err == io.EOF {
+		if csvrow, err = rdr.GetLine(); err == io.EOF {
 			return
 		}
-		if have, need := len(csvrow), len(csvr.TableSpec.FieldDefs); have != need {
+		if have, need := len(csvrow), len(rdr.TableSpec.FieldDefs); have != need {
 			err = chutils.Wrapper(chutils.ErrFieldCount,
-				fmt.Sprintf("at row %d, need %d fields but got %d", csvr.RowsRead+1, need, have))
+				fmt.Sprintf("at row %d, need %d fields but got %d", rdr.RowsRead+1, need, have))
 			return
 		}
 		if err != nil {
-			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", csvr.RowsRead+1))
+			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", rdr.RowsRead+1))
 			return
 		}
 		outrow := make(chutils.Row, 0)
@@ -245,13 +245,13 @@ func (csvr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err err
 		}
 		if validate {
 			for j := 0; j < numFields; j++ {
-				val, _ := csvr.TableSpec.FieldDefs[j].Validator(outrow[j], csvr.TableSpec, outrow, chutils.VPending)
+				val, _ := rdr.TableSpec.FieldDefs[j].Validator(outrow[j], rdr.TableSpec, outrow, chutils.VPending)
 				outrow[j] = val
 			}
 		}
 		data = append(data, outrow)
-		csvr.RowsRead++
-		if csvr.MaxRead > 0 && csvr.RowsRead > csvr.MaxRead {
+		rdr.RowsRead++
+		if rdr.MaxRead > 0 && rdr.RowsRead > rdr.MaxRead {
 			err = io.EOF
 			return
 		}
@@ -302,14 +302,14 @@ type Writer struct {
 }
 
 // Insert inserts data into ClickHouse via the clickhouse-client program.
-func (w *Writer) Insert() error {
-	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", w.conn.Host, w.conn.User)
-	if w.conn.Password != "" {
-		cmd = fmt.Sprintf("%s --password=%s", cmd, w.conn.Password)
+func (wtr *Writer) Insert() error {
+	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", wtr.conn.Host, wtr.conn.User)
+	if wtr.conn.Password != "" {
+		cmd = fmt.Sprintf("%s --password=%s", cmd, wtr.conn.Password)
 	}
 	cmd = fmt.Sprintf("%s %s ", cmd, "")
-	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(w.Separator()))
-	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, w.Table, "CSV", w.Name())
+	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(wtr.Separator()))
+	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, wtr.Table, "CSV", wtr.Name())
 	// running clickhouse-client as a command bc issuing the command itself chokes on --query element
 	c := exec.Command("bash", "-c", cmd)
 	err := c.Run()
@@ -317,18 +317,18 @@ func (w *Writer) Insert() error {
 }
 
 // Name returns the name of the ClickHouse table to insert to
-func (w *Writer) Name() string {
-	return w.name
+func (wtr *Writer) Name() string {
+	return wtr.name
 }
 
 // EOL returns the end-of-line rune
-func (w *Writer) EOL() rune {
-	return w.eol
+func (wtr *Writer) EOL() rune {
+	return wtr.eol
 }
 
-// Separators returns the field separator rune
-func (w *Writer) Separator() rune {
-	return w.separator
+// Separator returns the field separator rune
+func (wtr *Writer) Separator() rune {
+	return wtr.separator
 }
 
 // NewWriter creates a new Writer instance
