@@ -1,3 +1,18 @@
+// Package sql implements Input/Output for SQL.
+// One can use sql to create a new table from a query.  This is similar to the
+// ClickHouse CREATE MATERIALIZED VIEW statement but there is no trigger to update the output table if the input changes.
+//
+// There are three approaches to creating a new ClickHouse table:
+//   - Direct ClickHouse insertion.  Use sql Reader.Insert to issue an Insert query with Reader.Sql as the source.
+//
+//   - Values insertion. Use sql Writer.Insert to issue an Insert query using VALUES. The values are created by
+//     sql Writer writing values from a reader.  Although the source can be a sql.Reader, more commonly one would
+//     expect it to be a file.Reader.
+//
+//   - clickhouse-client insert.  Use a file Writer.Insert to issue a shell command using clickhouse-client.
+//     The file may be created by a file Writer.
+//
+// Before any of these approaches are used, the TableDef.CreateTable() can be used to create the destination table.
 package sql
 
 import (
@@ -15,7 +30,7 @@ import (
 type Reader struct {
 	Sql       string            // Sql is the SELECT string.  It does not have an INSERT
 	RowsRead  int               // RowsRead is the number of rows read so far
-	TableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
+	tableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
 	Name      string            // Name is the name of the output table created by Insert()
 	conn      *chutils.Connect  // conn is connector to ClickHouse
 	data      *sql.Rows         // data is the output of executing Reader.Sql
@@ -29,12 +44,16 @@ func NewReader(sql string, conn *chutils.Connect) *Reader {
 		RowsRead: 0,
 		Name:     "",
 		data:     nil,
-		TableSpec: &chutils.TableDef{
+		tableSpec: &chutils.TableDef{
 			Key:       "",
 			Engine:    chutils.MergeTree,
 			FieldDefs: nil,
 		},
 	}
+}
+
+func (rdr *Reader) TableSpec() *chutils.TableDef {
+	return rdr.tableSpec
 }
 
 // Init initializes Reader.TableDef by looking at the output of the query
@@ -113,17 +132,27 @@ func (rdr *Reader) Init() error {
 		}
 		fds[ind] = fd
 	}
-	rdr.TableSpec.FieldDefs = fds
+	rdr.tableSpec.FieldDefs = fds
 	return e
 }
 
-// Read reads nTarget rows.  If validate is true, the fields are validated against the TableDef.
-// If validate is false, the fields are returned as strings.
-func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err error) {
+// Read reads nTarget rows.  If nTarget == 0, the entire result set is returned.
+//
+// If validation == true:
+//   - The data is validated according to the rules in rdr.TableSpec.
+//   - The results are returned as the slice valid.
+//   - data is returned with the fields appropriately typed.
+//
+// If validation == false:
+//   - The data is not validated.
+//   - The return slice valid is nil
+//   - The fields are returned as strings.
+func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
+	valid = nil
 	if rdr.data == nil {
 		if rdr.data, err = rdr.conn.Query(rdr.Sql); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	cols, err := rdr.data.Columns()
@@ -139,9 +168,9 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 		}
 		if !rdr.data.Next() {
 			if e := rdr.Reset(); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
-			return data, io.EOF
+			return data, valid, io.EOF
 		}
 		rdr.RowsRead++
 		err = rdr.data.Scan(t...)
@@ -151,16 +180,16 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, err err
 		row := make(chutils.Row, 0)
 		for ind := 0; ind < ncols; ind++ {
 			l := string(*t[ind].(*sql.RawBytes))
-			//			if ind := strings.Index(l, "T00:00:00Z"); ind > 0 {
-			//				l = l[:ind]
-			//			}
 			row = append(row, l)
 		}
-		if validate && rdr.TableSpec.FieldDefs != nil {
+		if validate && rdr.TableSpec().FieldDefs != nil {
+			vrow := make(chutils.Valid, ncols)
 			for ind := 0; ind < ncols; ind++ {
-				outValue, _ := rdr.TableSpec.FieldDefs[ind].Validator(row[ind], rdr.TableSpec, row, chutils.VPending)
+				outValue, stat := rdr.TableSpec().FieldDefs[ind].Validator(row[ind])
 				row[ind] = outValue
+				vrow[ind] = stat
 			}
+			valid = append(valid, vrow)
 		}
 		data = append(data, row)
 	}

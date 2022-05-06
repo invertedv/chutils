@@ -7,14 +7,20 @@ import (
 )
 
 type mockRead struct {
-	s        [][]string
-	RowsRead int
-	name     string
+	s         [][]string
+	RowsRead  int
+	name      string
+	tableSpec *TableDef
 }
 
-func (m *mockRead) Read(nTarget int, validate bool) (data []Row, err error) {
+func (m *mockRead) TableSpec() *TableDef {
+	return m.tableSpec
+}
+
+func (m *mockRead) Read(nTarget int, validate bool) (data []Row, valid []Valid, err error) {
 	err = nil
 	data = nil
+	valid = nil
 	_ = validate // validate tested separately
 	if m.RowsRead < len(m.s) {
 		for r := 0; r < nTarget; r++ {
@@ -27,7 +33,7 @@ func (m *mockRead) Read(nTarget int, validate bool) (data []Row, err error) {
 		}
 		return
 	}
-	return nil, io.EOF
+	return nil, nil, io.EOF
 }
 
 func (m *mockRead) Reset() error {
@@ -68,7 +74,6 @@ func buildTableDef() TableDef {
 			Description: "",
 			Legal:       NewLegalValues(),
 			Missing:     nil,
-			Calculator:  nil,
 			Width:       0,
 		}
 		fd[ind] = fdx
@@ -136,7 +141,7 @@ func TestFieldDef_Validator(t *testing.T) {
 
 		}
 		for c := 0; c < len(inputs[r]); c++ {
-			_, status := fd.Validator(inputs[r][c], &td, nil, VPending)
+			_, status := fd.Validator(inputs[r][c])
 			if status != expected[r][c] {
 				t.Errorf("expected %v got %v", expected[r][c], status)
 			}

@@ -38,7 +38,7 @@ func TestReader_Seek(t *testing.T) {
 			break
 		}
 
-		l, e := rt1.Read(1, false)
+		l, _, e := rt1.Read(1, false)
 		if l[0][0] != result[j] {
 			t.Errorf("Results don't match on case %d. Expect %s but got %s", j, result[j], l[0][0])
 		}
@@ -65,13 +65,13 @@ func TestReader_Reset(t *testing.T) {
 			break
 		}
 
-		if _, e := rt1.Read(readcnt[j], false); e != nil {
+		if _, _, e := rt1.Read(readcnt[j], false); e != nil {
 			t.Errorf("unexpected read error on case %d", j)
 			break
 		}
 
 		rt1.Reset()
-		r, e := rt1.Read(readcnt[j], false)
+		r, _, e := rt1.Read(readcnt[j], false)
 		if e != nil {
 			t.Errorf("unexpected read error on case %d", j)
 			break
@@ -92,13 +92,13 @@ func TestReader_Init(t *testing.T) {
 		if e := rt1.Init(); e != nil {
 			t.Errorf("unexpected error")
 		}
-		if len(rt1.TableSpec.FieldDefs) != len(results[j]) {
-			t.Errorf("case %d expected %d fields got %d fields", j, len(results[j]), len(rt1.TableSpec.FieldDefs))
+		if len(rt1.TableSpec().FieldDefs) != len(results[j]) {
+			t.Errorf("case %d expected %d fields got %d fields", j, len(results[j]), len(rt1.TableSpec().FieldDefs))
 			break
 		}
 		for k := 0; k < len(results[j]); k++ {
-			if results[j][k] != rt1.TableSpec.FieldDefs[k].Name {
-				t.Errorf("case %d expected name %s got name %s", j, results[j][k], rt1.TableSpec.FieldDefs[j].Name)
+			if results[j][k] != rt1.TableSpec().FieldDefs[k].Name {
+				t.Errorf("case %d expected name %s got name %s", j, results[j][k], rt1.TableSpec().FieldDefs[j].Name)
 			}
 		}
 	}
@@ -126,7 +126,7 @@ func TestReader_Read(t *testing.T) {
 		if e := rt1.Seek(row[j]); e != nil {
 			log.Fatalln(e)
 		}
-		d, e := rt1.Read(1, false)
+		d, _, e := rt1.Read(1, false)
 		if e != nil {
 			if errors.Unwrap(e).(chutils.ErrType) == chutils.ErrFieldCount {
 				if result[j] == "ErrFieldCount" {
@@ -175,7 +175,7 @@ func TestReader_Read(t *testing.T) {
 		t.Errorf("unexpected Init error, case %d", 0)
 	}
 	for j := 0; j < len(field); j++ {
-		_, fd, e := rt1.TableSpec.Get(field[j])
+		_, fd, e := rt1.TableSpec().Get(field[j])
 		if e != nil {
 			t.Errorf("unexpected Get error, field: %s", field[j])
 			return
@@ -201,7 +201,7 @@ func TestReader_Read(t *testing.T) {
 		}
 	}
 	// read the row
-	d, e := rt1.Read(1, true)
+	d, _, e := rt1.Read(1, true)
 	if e != nil {
 		t.Errorf("unexpected error reading type check case")
 		return
@@ -270,7 +270,7 @@ func TestWriter_Export(t *testing.T) {
 	// once we specify the type of a as ChInt, the single quote goes away
 	result = "1,'2'\n3,'4'\n5,'6'\n7,'8'\n9,'19'\n"
 	rt1.Reset()
-	fd := rt1.TableSpec.FieldDefs[0]
+	fd := rt1.TableSpec().FieldDefs[0]
 	fd.ChSpec.Base = chutils.ChInt
 	fd.ChSpec.Length = 16
 	f = &wstr{""}

@@ -1,13 +1,59 @@
 // Package chutils is a set of utilities designed to work with ClickHouse.
-// The package supports:
-//   - Importing data.
-//   - Building and issuing the CREATE TABLE statement.
-//   - QA that checks field
-//   - User-supplied function that can calculate the field if it fails QA
-//   - Concurrent execution of table loading
+// The utilities are designed to facilitate import and export of data.
+//
+//The chutils package defines:
+//   - An Input interface that reads data.
+//   - A TableDef struct that specifies the structure of the input.
+//       - The user may specify the fields/types of a TableDef or they can be imputed.
+//       - Building and issuing the corresponding CREATE TABLE statement
+//       - Range/value check of fields as they are read.
+//   - An Output interface that writes data.
+//   - Concurrent execution of Input/Output interfaces
+//
+// The file package implements Input and Output for text files.
+// The sql package implements Input and Output for SQL.
+//
+// These two packages can be mixed and matched for Input/Output.
+//
+// The general use pattern is
+//   1. Read from Input
+//   2. <Validate data>
+//   3. Write to output
+//
+// Example uses:
+//
+// 1. Load a CSV to ClickHouse -- Option 1
+//    a. Define a file Reader to point to the CSV.
+//    b. Use Init to create the TableDef and then Impute to determine the fields and types.
+//    c. Use the Create method of TableDef to create the ClickHouse table to populate.
+//    d. Define a file Writer that points a temporary file.
+//    e. Use chutils Export to create a temporary file that uses the Reader/Writer.
+//    f. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
+//
+// 2. Load a CSV to ClickHouse -- Option 2.
+//    a. same as a, above.
+//    b. same as b, above.
+//    c. same as c, above.
+//    d. Define an SQL Writer that points to the table to populate.
+//    e. Use chutils Export to create a VALUES insert statement.
+//    f. Use the Writer Insert statement to execute the Insert.
+//
+// 3. Insert to a ClickHouse table from a ClickHouse query -- Option 1.
+//    a. Define an sql Reader to define the source query.
+//    b. Use Init to define the TableDef and Create to create the output table.
+//    c. Use Insert to execute the insert query. (Note, there is no data validation).
+//
+// 4. Insert to a ClickHouse table from a ClickHouse query -- Option 2.
+//    a. Same as a, above.
+//    b. Same as b, above.
+//    c. Define an sql Writer that points to the table to populate.
+//    d. Use chutils Export to create the VALUEs statement that is used to insert into the table.
+//    e. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
 package chutils
 
 //TODO: add another slice of FieldDefs that are calculated fields
+//TODO: remove calculator function
+//TODO: add nested package to have a reader that takes Input interface and then works on that and implements Input
 
 import (
 	"database/sql"
@@ -32,11 +78,12 @@ var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "
 
 // The Input interface specifies the requirments for reading source data.
 type Input interface {
-	Read(nTarget int, validate bool) (data []Row, err error) // Read reads rows from the source
-	Reset() error                                            // Reset to beginning of source
-	CountLines() (numLines int, err error)                   // CountLines returns # of lines in source
-	Seek(lineNo int) error                                   // Seek moves to lineNo in source
-	Close() error                                            // Close the source
+	Read(nTarget int, validate bool) (data []Row, valid []Valid, err error) // Read from the Input, possibly with validation
+	Reset() error                                                           // Reset to beginning of source
+	CountLines() (numLines int, err error)                                  // CountLines returns # of lines in source
+	Seek(lineNo int) error                                                  // Seek moves to lineNo in source
+	Close() error                                                           // Close the source
+	TableSpec() *TableDef                                                   // TableSpec returns the TableDef for the source
 }
 
 // The Output interface specifies requirements for writing data.
@@ -95,6 +142,7 @@ func (i ErrType) Error() string {
 	return i.String()
 }
 
+// Wrapper wraps an ErrType with a specific error message.
 func Wrapper(e error, text string) error {
 	return fmt.Errorf("%v: %w", text, e)
 }
@@ -121,7 +169,6 @@ const (
 	ChDate                          // Date: ClickHouse type is Date
 )
 
-// Stringer which strips the leading Ch from the type.
 func (t ChType) String() string {
 	switch t {
 	case ChUnknown:
@@ -334,20 +381,23 @@ const (
 
 //go:generate stringer -type=Status
 
+// Valid is a slice of type Status that is returned by Read if validate=true
+type Valid []Status
+
 // FieldDef struct holds the full definition of single ClickHouse field.
 type FieldDef struct {
-	Name        string                                // Name of the field.
-	ChSpec      ChField                               // ChSpec is the Clickhouse specification of field.
-	Description string                                // Description is an optional description for CREATE TABLE statement.
-	Legal       *LegalValues                          // Legal are optional bounds/list of legal values.
-	Missing     interface{}                           // Missing is the value used for a field if the value is missing/illegal.
-	Calculator  func(td *TableDef, r Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
-	Width       int                                   // Width of field (for flat files)
+	Name        string       // Name of the field.
+	ChSpec      ChField      // ChSpec is the Clickhouse specification of field.
+	Description string       // Description is an optional description for CREATE TABLE statement.
+	Legal       *LegalValues // Legal are optional bounds/list of legal values.
+	Missing     interface{}  // Missing is the value used for a field if the value is missing/illegal.
+	//	Calculator  func(td *TableDef, r Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
+	Width int // Width of field (for flat files)
 }
 
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
-func (fd *FieldDef) Validator(inValue interface{}, td *TableDef, r Row, s Status) (outValue interface{}, status Status) {
+func (fd *FieldDef) Validator(inValue interface{}) (outValue interface{}, status Status) {
 	status = VPass
 	outValue, ok := fd.ChSpec.Converter(inValue)
 	if !ok {
@@ -358,17 +408,6 @@ func (fd *FieldDef) Validator(inValue interface{}, td *TableDef, r Row, s Status
 
 	if fd.Legal.Check(outValue) {
 		return
-	}
-	if fd.Calculator != nil && s != VCalculated {
-		hold := outValue
-		outValue, status = fd.Validator(fd.Calculator(td, r), td, r, VCalculated)
-		// see if estimated value is legal
-		if status == VPass {
-			status = VCalculated
-			return
-		}
-		// if not, put back original value and Fail
-		outValue = hold
 	}
 	outValue = fd.Missing
 	status = VValueFail
@@ -430,7 +469,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 	// Look at RowsToExamine rows to see what types we have.
 	rowCount := 0
 	for rowCount = 0; (rowCount < rowsToExamine) || rowsToExamine == 0; rowCount++ {
-		data, errx := rdr.Read(1, false)
+		data, _, errx := rdr.Read(1, false)
 		// EOF is not an error -- just stop reading
 		if errx == io.EOF {
 			break
@@ -542,7 +581,7 @@ func Export(rdr Input, wrtr Output) error {
 	var data []Row
 	for r := 0; ; r++ {
 		var err error
-		if data, err = rdr.Read(1, true); err != nil {
+		if data, _, err = rdr.Read(1, true); err != nil {
 			// no need to report EOF
 			if err == io.EOF {
 				return nil

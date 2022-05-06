@@ -1,4 +1,10 @@
-// Package file handles creating readers for files
+// Package file implements Input/Output for text files.
+// Text files can
+//   - Be delimited or fixed-width
+//   - Have header rows or not
+//
+// Possible use strategies:
+//   - Read from a file, (validate, clean), Insert
 package file
 
 import (
@@ -18,7 +24,7 @@ type Reader struct {
 	Skip      int               // Skip is the # of rows to skip in the file
 	RowsRead  int               // RowsRead is current count of rows read from the file (includes header)
 	MaxRead   int               // MaxRead is the maximum number of rows to read
-	TableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing the fields in the source.  Can be supplied or derived from the file
+	tableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing the fields in the source.  Can be supplied or derived from the file
 	Width     int               // Width is the line width for flat files
 	Quote     rune              // Quote is the optional quote around strings that contain the Separator
 	eol       rune              // EOL is the end of line character
@@ -26,7 +32,7 @@ type Reader struct {
 	rdr       *bufio.Reader     // rdr is encoding/file package reader that reads from rws
 	filename  string            // filename is source we are reading from
 	rws       io.ReadSeekCloser // rws is the interface to source of data
-	bufSize   int
+	bufSize   int               // bufSize is the size of the bufio read buffer
 }
 
 // NewReader initializes an instance of Reader
@@ -41,7 +47,7 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 		Skip:      skip,
 		RowsRead:  0,
 		MaxRead:   maxRead,
-		TableSpec: &chutils.TableDef{},
+		tableSpec: &chutils.TableDef{},
 		Width:     width,
 		Quote:     quote,
 		eol:       eol,
@@ -51,6 +57,14 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 		rws:       rws,
 		bufSize:   bufSize,
 	}
+}
+
+func (rdr *Reader) TableSpec() *chutils.TableDef {
+	return rdr.tableSpec
+}
+
+func (rdr *Reader) SetTableSpec(ts *chutils.TableDef) {
+	rdr.tableSpec = ts
 }
 
 // Separator returns field separator rune
@@ -123,7 +137,10 @@ func (rdr *Reader) Init() error {
 			return e
 		}
 	}
-	row, err := rdr.GetLine()
+	if rdr.Skip == 0 {
+		return chutils.Wrapper(chutils.ErrInput, "Skip = 0 but need a header row")
+	}
+	row, err := rdr.getLine()
 	rdr.RowsRead++
 	if err != nil {
 		return chutils.Wrapper(chutils.ErrInput, "initial read failed")
@@ -140,12 +157,12 @@ func (rdr *Reader) Init() error {
 		}
 		fds[ind] = fd
 	}
-	rdr.TableSpec.FieldDefs = fds
+	rdr.tableSpec.FieldDefs = fds
 	return nil
 }
 
 // GetLine returns the next line from Reader and parses it into fields.
-func (rdr *Reader) GetLine() (line []string, err error) {
+func (rdr *Reader) getLine() (line []string, err error) {
 	err = nil
 	if rdr.Width == 0 {
 		var l string
@@ -201,36 +218,47 @@ func (rdr *Reader) GetLine() (line []string, err error) {
 	if len(lstr) != rdr.Width {
 		return nil, chutils.Wrapper(chutils.ErrFields, "line is wrong width")
 	}
-	line = make([]string, len(rdr.TableSpec.FieldDefs))
+	line = make([]string, len(rdr.TableSpec().FieldDefs))
 	start := 0
 	for ind := 0; ind < len(line); ind++ {
-		w := rdr.TableSpec.FieldDefs[ind].Width
+		w := rdr.TableSpec().FieldDefs[ind].Width
 		line[ind] = lstr[start : start+w]
 		start += w
 	}
 	return
 }
 
-// Read reads numRow rows from, does type conversion and validation (validate==true)
-func (rdr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err error) {
+// Read reads nTarget rows.  If nTarget == 0, the entire file is read.
+//
+// If validation == true:
+//   - The data is validated according to the rules in rdr.TableSpec.
+//   - The results are returned as the slice valid.
+//   - data is returned with the fields appropriately typed.
+//
+// If validation == false:
+//   - The data is not validated.
+//   - The return slice valid is nil
+//   - The fields are returned as strings.
+func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	var csvrow []string
+	valid = nil
 
 	if rdr.RowsRead == 0 && rdr.Skip > 0 {
 		for i := 0; i < rdr.Skip; i++ {
-			if _, err = rdr.GetLine(); err != nil {
-				return nil, chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("failed at row %d", i))
+			if _, err = rdr.getLine(); err != nil {
+				return nil, nil, chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("failed at row %d", i))
 			}
 		}
 	}
-	numFields := len(rdr.TableSpec.FieldDefs)
+	numFields := len(rdr.TableSpec().FieldDefs)
 	//	csvr.rdr.FieldsPerRecord = numFields
 
 	data = make([]chutils.Row, 0)
 	for rowCount := 1; ; rowCount++ {
-		if csvrow, err = rdr.GetLine(); err == io.EOF {
+		if csvrow, err = rdr.getLine(); err == io.EOF {
 			return
 		}
-		if have, need := len(csvrow), len(rdr.TableSpec.FieldDefs); have != need {
+		if have, need := len(csvrow), len(rdr.TableSpec().FieldDefs); have != need {
 			err = chutils.Wrapper(chutils.ErrFieldCount,
 				fmt.Sprintf("at row %d, need %d fields but got %d", rdr.RowsRead+1, need, have))
 			return
@@ -244,10 +272,13 @@ func (rdr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err erro
 			outrow = append(outrow, csvrow[j])
 		}
 		if validate {
+			vrow := make(chutils.Valid, numFields)
 			for j := 0; j < numFields; j++ {
-				val, _ := rdr.TableSpec.FieldDefs[j].Validator(outrow[j], rdr.TableSpec, outrow, chutils.VPending)
+				val, stat := rdr.TableSpec().FieldDefs[j].Validator(outrow[j])
 				outrow[j] = val
+				vrow[j] = stat
 			}
+			valid = append(valid, vrow)
 		}
 		data = append(data, outrow)
 		rdr.RowsRead++
@@ -255,13 +286,14 @@ func (rdr *Reader) Read(numRow int, validate bool) (data []chutils.Row, err erro
 			err = io.EOF
 			return
 		}
-		if rowCount == numRow && numRow > 0 {
+		if rowCount == nTarget && nTarget > 0 {
 			return
 		}
 	}
 }
 
-// Rdrs generates slices of len nChunks Input/Output by slicing up rdr0 data.  rdr0 is not part of the Input slice.
+// Rdrs generates slices of Readers of len nRdrs. The data represented by rdr0 is equally divided
+// amongst the Readers in the slice.
 func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 
 	r = nil //make([]*Reader, 0)
@@ -281,7 +313,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 			np = 0
 		}
 		x := NewReader(rdr0.Name(), rdr0.Separator(), rdr0.EOL(), rdr0.Quote, rdr0.Width, rdr0.Skip, np, fh, rdr0.bufSize)
-		x.TableSpec = rdr0.TableSpec
+		x.tableSpec = rdr0.TableSpec()
 		if err = x.Seek(start); err != nil {
 			return
 		}
@@ -291,17 +323,18 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 	return
 }
 
-// Writer implements chutils.Output
+// Writer implements chutils.Output.  Writer will accept any type that satisfies WriterCloser. Typically, this would
+// be a file.
 type Writer struct {
 	io.WriteCloser
-	name      string
+	Table     string           // Table is the ClickHouse table to Insert to
+	name      string           // name of the file being written to
 	separator rune             // separator is the field separator
 	eol       rune             // eol is the end-of-line character
 	conn      *chutils.Connect // Con is the ClickHouse connect info (needed for Insert)
-	Table     string           // Table is the table to load created file to (needed for Insert)
 }
 
-// Insert inserts data into ClickHouse via the clickhouse-client program.
+// Insert inserts the file Writer.Name into ClickHouse table Writer.Table via the clickhouse-client program.
 func (wtr *Writer) Insert() error {
 	cmd := fmt.Sprintf("clickhouse-client --host=%s --user=%s", wtr.conn.Host, wtr.conn.User)
 	if wtr.conn.Password != "" {
@@ -316,7 +349,7 @@ func (wtr *Writer) Insert() error {
 	return err
 }
 
-// Name returns the name of the ClickHouse table to insert to
+// Name returns the name of the file Writer points to.
 func (wtr *Writer) Name() string {
 	return wtr.name
 }
@@ -333,10 +366,10 @@ func (wtr *Writer) Separator() rune {
 
 // NewWriter creates a new Writer instance
 func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator rune, eol rune, table string) *Writer {
-	return &Writer{f, name, separator, eol, con, table}
+	return &Writer{f, table, name, separator, eol, con}
 }
 
-// Wrtrs creates a slice of Writers suitable for chutils.Concur.
+// Wrtrs creates a slice of Writers suitable for chutils.Concur.  The file names are chosen randomly.
 func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator rune, eol rune, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 

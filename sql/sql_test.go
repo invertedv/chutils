@@ -48,8 +48,8 @@ func TestReader_Init(t *testing.T) {
 	}
 	actNames := make([]string, 0)
 	actBases := make([]chutils.ChType, 0)
-	for j := 0; j < len(rdr.TableSpec.FieldDefs); j++ {
-		_, fd, _ := rdr.TableSpec.Get(resNames[j])
+	for j := 0; j < len(rdr.TableSpec().FieldDefs); j++ {
+		_, fd, _ := rdr.TableSpec().Get(resNames[j])
 		actNames = append(actNames, fd.Name)
 		actBases = append(actBases, fd.ChSpec.Base)
 	}
@@ -83,7 +83,9 @@ func TestReader_Read(t *testing.T) {
 
 	expected := [][]interface{}{
 		{"a", 1.0, "X", 1, time.Date(2020, 1, 2, 0.0, 0.0, 0.0, 0.0, time.UTC)},
-		{"b", 2.0, "Y", 4, dtMiss}}
+		{"b", -1.0, "Y", 4, dtMiss}}
+	expectedV := []chutils.Valid{{chutils.VPass, chutils.VPass, chutils.VPass, chutils.VPass, chutils.VPass},
+		{chutils.VPass, chutils.VValueFail, chutils.VPass, chutils.VPass, chutils.VTypeFail}}
 
 	// build columns
 	cols := make([]*sqlmock.Column, 0)
@@ -104,18 +106,23 @@ func TestReader_Read(t *testing.T) {
 	if err := rdr.Init(); err != nil {
 		t.Errorf("incorrect query")
 	}
-
-	_, fd, err := rdr.TableSpec.Get("edate")
+	// put in some bounds and missing values for these fields
+	_, fd, err := rdr.TableSpec().Get("edate")
 	fd.Missing = dtMiss
+	_, fd, err = rdr.TableSpec().Get("bflt")
+	fd.Missing = -1.0
+	fd.Legal.HighLimit = 1.5
+	fd.Legal.LowLimit = 0.0
 
 	mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
 
 	for r := 0; r < len(expected); r++ {
-		data, err := rdr.Read(1, true)
+		data, v, err := rdr.Read(1, true)
 		if err != nil {
 			t.Errorf("Query failed")
 		}
 		assert.ElementsMatch(t, data[0], expected[r])
+		assert.Equal(t, v[0], expectedV[r])
 	}
 
 	// re-build rows
@@ -127,12 +134,12 @@ func TestReader_Read(t *testing.T) {
 	mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
 	rdr.Reset()
 
-	data, err := rdr.Read(2, false)
+	data, _, err := rdr.Read(2, false)
 	for r := 0; r < len(expected); r++ {
 		for c := 0; c < len(data[r]); c++ {
 			s := fmt.Sprintf("%v", input[r][c])
 			d := data[r][c].(string)
-			_, fd, _ := rdr.TableSpec.Get(resNames[c])
+			_, fd, _ := rdr.TableSpec().Get(resNames[c])
 			// strip time out of date
 			if fd.ChSpec.Base == chutils.ChDate && len(d) > 10 {
 				d = d[0:10]
@@ -194,7 +201,7 @@ func TestReader_Seek(t *testing.T) {
 		}
 		mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
 		rdr.Seek(seekTo[ind])
-		data, e := rdr.Read(1, true)
+		data, _, e := rdr.Read(1, true)
 		if e != nil {
 			if expected[ind] != "ERR" {
 				t.Errorf("unexpected read error seek to %d", seekTo[ind])
