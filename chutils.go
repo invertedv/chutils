@@ -299,6 +299,9 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 		low, okLow := l.LowLimit.(float64)
 		high, okHigh := l.HighLimit.(float64)
 		if okLow && okHigh {
+			if low == high {
+				return
+			}
 			// Do range check
 			if val >= low && val <= high {
 				return
@@ -312,6 +315,9 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 		low, okLow := l.LowLimit.(int)
 		high, okHigh := l.HighLimit.(int)
 		if okLow && okHigh {
+			if low == high {
+				return
+			}
 			// Do range check
 			if val >= low && val <= high {
 				return
