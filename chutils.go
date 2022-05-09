@@ -4,7 +4,7 @@
 //The chutils package defines:
 //   - An Input interface that reads data.
 //   - A TableDef struct that specifies the structure of the input.
-//       - The user may specify the fields/types of a TableDef or they can be imputed.
+//       - The user may specify the fields/types of a TableDef, or they can be imputed.
 //       - Building and issuing the corresponding CREATE TABLE statement
 //       - Range/value check of fields as they are read.
 //   - An Output interface that writes data.
@@ -20,7 +20,7 @@
 //   2. <Validate data>
 //   3. Write to output
 //
-// Example uses:
+// Example uses
 //
 // 1. Load a CSV to ClickHouse -- Option 1
 //    a. Define a file Reader to point to the CSV.
@@ -50,10 +50,6 @@
 //    d. Use chutils Export to create the VALUEs statement that is used to insert into the table.
 //    e. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
 package chutils
-
-//TODO: add another slice of FieldDefs that are calculated fields
-//TODO: remove calculator function
-//TODO: add nested package to have a reader that takes Input interface and then works on that and implements Input
 
 import (
 	"database/sql"
@@ -378,11 +374,9 @@ type Status int
 
 // Field Validation Status enum type
 const (
-	VPending    Status = 0 + iota // Pending means the validation status is not determined
-	VValueFail                    // ValueFail: value is illegal
-	VTypeFail                     // TypeFail: value cannot be coerced to correct type
-	VCalculated                   // Calculated: value is calculated from other fields
-	VPass                         // Pass: value is OK
+	VPass      Status = 0 + iota // Pass: value is OK
+	VValueFail                   // ValueFail: value is illegal
+	VTypeFail                    // TypeFail: value cannot be coerced to correct type
 )
 
 //go:generate stringer -type=Status

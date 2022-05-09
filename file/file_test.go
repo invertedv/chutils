@@ -280,3 +280,7 @@ func TestWriter_Export(t *testing.T) {
 		t.Errorf("expected %s got %s", result, f.buf)
 	}
 }
+
+func ExampleReader_Read() {
+
+}

@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+// TODO: think about changing to TableDef from TableSpec
+
 // Reader implements chutils.Input interface.
 type Reader struct {
 	Skip      int               // Skip is the # of rows to skip in the file

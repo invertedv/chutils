@@ -7,17 +7,19 @@
 //  - Adding a field based on which input fields passed validation.
 //  - Adding additional fields calculated from the existing inputs.
 //  - Adding additional fields based on other variables using a function closure.
+//  - Modifying existing fields
 package nested
 
 import (
-	"fmt"
 	"github.com/invertedv/chutils"
+	"io"
 )
 
 // NewCalcFn defines the signature of a function that calculates a new field.
-type NewCalcFn func(ts *chutils.TableDef, data chutils.Row, valid chutils.Valid) (interface{}, error)
+// Note that NewCalcFn can also modify values within data
+type NewCalcFn func(ts *chutils.TableDef, data chutils.Row, valid chutils.Valid, validatge bool) (interface{}, error)
 
-//  Reader struc that implements chutils.Input.
+// Reader struc that implements chutils.Input.
 //  Note that r cannot be embedded because we need to have both r.Read and Reader.Read
 type Reader struct {
 	r         chutils.Input     // Input before new fields
@@ -26,9 +28,9 @@ type Reader struct {
 }
 
 // NewReader creates a new Reader from
-//   - rdr base reader that satisfies chutils.Input.
-//   - newFields is an array that defines the additional fields
-//   -
+//   - rdr a base reader that satisfies chutils.Input.
+//   - newFields an array that defines the additional fields
+//   - newCalcs an array of functions that populate the additional fields
 func NewReader(rdr chutils.Input, newFields map[int]*chutils.FieldDef, newCalcs []NewCalcFn) (*Reader, error) {
 	if len(newFields) != len(newCalcs) {
 		return nil, chutils.Wrapper(chutils.ErrFieldCount, "# new fields != # new calc functions")
@@ -40,7 +42,6 @@ func NewReader(rdr chutils.Input, newFields map[int]*chutils.FieldDef, newCalcs 
 		fd[ind] = fdExist[ind]
 	}
 	for ind := 0; ind < len(newFields); ind++ {
-		fmt.Println(ind+nExist, "existing")
 		fd[ind+nExist] = newFields[ind]
 	}
 	ts := &chutils.TableDef{
@@ -62,8 +63,9 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 	data = nil
 	valid = nil
 	err = nil
-	data, valid, err = rdr.r.Read(nTarget, validate)
-	if err != nil {
+	data, valid, errRead := rdr.r.Read(nTarget, validate)
+	var outValue interface{}
+	if err != nil && errRead != io.EOF {
 		return nil, nil, err
 	}
 	// number of fields coming in from r
@@ -71,19 +73,25 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 	for row := 0; row < len(data); row++ {
 		for ind := 0; ind < len(rdr.newCalcs); ind++ {
 			indBig := ind + nExist
-			inValue, e := rdr.newCalcs[ind](rdr.tableSpec, data[0], valid[0])
+			if !validate {
+				outValue, err = rdr.newCalcs[ind](rdr.tableSpec, data[0], nil, validate)
+				if err != nil {
+					return nil, nil, err
+				}
+				data[row] = append(data[row], outValue)
+				break
+			}
+			outValue, err = rdr.newCalcs[ind](rdr.tableSpec, data[row], valid[row], validate)
 			if err != nil {
-				return nil, nil, e
+				return nil, nil, err
 			}
-			outValue := inValue
-			status := chutils.VPending
-			if validate {
-				outValue, status = rdr.TableSpec().FieldDefs[indBig].Validator(inValue)
-			}
-			data[row] = append(data[row], outValue)
+			outValueVal, status := rdr.TableSpec().FieldDefs[indBig].Validator(outValue)
+			data[row] = append(data[row], outValueVal)
 			valid[row] = append(valid[row], status)
 		}
 	}
+	// Preserve io.EOF if we got it
+	err = errRead
 	return
 }
 
