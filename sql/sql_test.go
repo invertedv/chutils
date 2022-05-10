@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
+	"github.com/invertedv/chutils/file"
+	_ "github.com/mailru/go-clickhouse"
 	"github.com/stretchr/testify/assert"
+	"log"
+	"os"
 	"testing"
 	"time"
 )
@@ -132,7 +136,9 @@ func TestReader_Read(t *testing.T) {
 	}
 
 	mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
-	rdr.Reset()
+	if rdr.Reset() != nil {
+		t.Errorf("unexpected error in Reset")
+	}
 
 	data, _, err := rdr.Read(2, false)
 	for r := 0; r < len(expected); r++ {
@@ -200,7 +206,9 @@ func TestReader_Seek(t *testing.T) {
 			rows = rows.AddRow(input[j]...)
 		}
 		mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
-		rdr.Seek(seekTo[ind])
+		if rdr.Seek(seekTo[ind]) != nil {
+			t.Errorf("unexpected error in Seek")
+		}
 		data, _, e := rdr.Read(1, true)
 		if e != nil {
 			if expected[ind] != "ERR" {
@@ -242,4 +250,107 @@ func TestWriter_Insert(t *testing.T) {
 	if e := wrtr.Insert(); e != nil {
 		t.Errorf("unexpected Insert error")
 	}
+}
+
+// This example reads from a file.Reader and writes to ClickHouse using a sql.Writer
+func ExampleWriter_Write() {
+	/*
+		/home/test/data/zip_data.csv:
+		id,zip,value
+		1A34,90210,20.8
+		1X88,43210,19.2
+		1B23,77810,NA
+		1r99,94043,100.4
+		1x09,hello,9.9
+	*/
+
+	const inFile = "/home/will/tmp/zip_data.csv" // source data
+	const table = "testing.values"               // ClickHouse destination table
+	var con *chutils.Connect
+	con, err := chutils.NewConnect("http", "127.0.0.1", "tester", "testGoNow")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if con.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
+	f, err := os.Open(inFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	rdr := file.NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
+	defer func() {
+		if rdr.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
+	if e := rdr.Init(); e != nil {
+		log.Fatalln(err)
+	}
+	if e := rdr.TableSpec().Impute(rdr, 0, .95); e != nil {
+		log.Fatalln(e)
+	}
+
+	// Specify zip as FixedString(5) with a missing value of 00000
+	_, fd, err := rdr.TableSpec().Get("zip")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	// zip will impute to int if we don't make this change
+	fd.ChSpec.Base = chutils.ChFixedString
+	fd.ChSpec.Length = 5
+	fd.Missing = "00000"
+	legal := make(map[string]int)
+	legal["90210"], legal["43210"], legal["77810"], legal["94043"] = 1, 1, 1, 1
+	fd.Legal.Levels = &legal
+
+	// Specify value as having a range of [0,30] with a missing value of -1.0
+	_, fd, err = rdr.TableSpec().Get("value")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fd.Legal.HighLimit = 30.0
+	fd.Legal.LowLimit = 0.0
+	fd.Missing = -1.0
+
+	rdr.TableSpec().Engine = chutils.MergeTree
+	rdr.TableSpec().Key = "id"
+	if err := rdr.TableSpec().Create(con, table); err != nil {
+		log.Fatalln(err)
+	}
+
+	wrtr := NewWriter(table, con)
+	if err := chutils.Load(rdr, wrtr); err != nil {
+		log.Fatalln(err)
+	}
+	qry := fmt.Sprintf("SELECT * FROM %s", table)
+	res, err := con.Query(qry)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if res.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
+	for res.Next() {
+		var (
+			id    string
+			zip   string
+			value float64
+		)
+		if res.Scan(&id, &zip, &value) != nil {
+			log.Fatalln(err)
+		}
+		fmt.Println(id, zip, value)
+	}
+	// Output:
+	//1A34 90210 20.8
+	//1B23 77810 -1
+	//1X88 43210 19.2
+	//1r99 94043 -1
+	//1x09 00000 9.9
+
 }

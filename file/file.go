@@ -61,10 +61,12 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 	}
 }
 
+// TableSpec returns the TableDef
 func (rdr *Reader) TableSpec() *chutils.TableDef {
 	return rdr.tableSpec
 }
 
+// SetTableSpec sets Reader.tablespec.  Needed if tablespec is not created by Reader.TableSpec().Impute().
 func (rdr *Reader) SetTableSpec(ts *chutils.TableDef) {
 	rdr.tableSpec = ts
 }

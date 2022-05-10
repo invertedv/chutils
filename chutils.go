@@ -3,10 +3,10 @@
 //
 //The chutils package defines:
 //   - An Input interface that reads data.
-//   - A TableDef struct that specifies the structure of the input.
-//       - The user may specify the fields/types of a TableDef, or they can be imputed.
-//       - Building and issuing the corresponding CREATE TABLE statement
-//       - Range/value check of fields as they are read.
+//   - A TableDef struct that specifies the structure of the input. Features include:
+//       - The fields/types of a TableDef can be specified, or they can be imputed from the data.
+//       - The corresponding CREATE TABLE statement can be built and issued.
+//       - Checks of the range/values of fields as they are read.
 //   - An Output interface that writes data.
 //   - Concurrent execution of Input/Output interfaces
 //
@@ -22,7 +22,7 @@
 //
 // Example uses
 //
-// 1. Load a CSV to ClickHouse -- Option 1
+// 1. Load a CSV to ClickHouse -- Option 1 (see Example in package file)
 //    a. Define a file Reader to point to the CSV.
 //    b. Use Init to create the TableDef and then Impute to determine the fields and types.
 //    c. Use the Create method of TableDef to create the ClickHouse table to populate.
@@ -30,7 +30,7 @@
 //    e. Use chutils Export to create a temporary file that uses the Reader/Writer.
 //    f. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
 //
-// 2. Load a CSV to ClickHouse -- Option 2.
+// 2. Load a CSV to ClickHouse -- Option 2 (see Example in package sql).
 //    a. same as a, above.
 //    b. same as b, above.
 //    c. same as c, above.

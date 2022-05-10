@@ -80,7 +80,7 @@ func TestReader_Read(t *testing.T) {
 // Example 1
 func ExampleReader_Read() {
 	/*
-		/home/test/data/input.csv:
+		/home/will/examples/data/input.csv
 
 		x,y
 		1.0,2.0
@@ -88,13 +88,17 @@ func ExampleReader_Read() {
 		100.0, 100.0
 	*/
 
-	const myFile = "/home/will/tmp/input.csv"
+	const myFile = "/home/will/examples/data/input.csv"
 	inFile, err := os.Open(myFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	baseReader := file.NewReader("", ',', '\n', '"', 0, 1, 0, inFile, 0)
-	defer baseReader.Close()
+	defer func() {
+		if baseReader.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
 	// initialize TableSpec
 	if e := baseReader.Init(); e != nil {
 		log.Fatalln(e)
@@ -142,13 +146,17 @@ func ExampleReader_Read() {
 // Example : Column Locations Unknown
 func ExampleReader_Read_additional() {
 	// If we are unsure of where x and y might be in the CSV, we can find out from the TableSpec
-	const myFile = "/home/test/data/input.csv"
+	const myFile = "/home/will/examples/data/input.csv"
 	inFile, err := os.Open(myFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	baseReader := file.NewReader("", ',', '\n', '"', 0, 1, 0, inFile, 0)
-	defer baseReader.Close()
+	defer func() {
+		if baseReader.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
 	// initialize TableSpec
 	if e := baseReader.Init(); e != nil {
 		log.Fatalln(e)
@@ -198,4 +206,5 @@ func ExampleReader_Read_additional() {
 		log.Fatalln(err)
 	}
 	fmt.Println(data)
+	// Output: 	[[1 2 2] [3 4 12] [100 100 -1]]
 }

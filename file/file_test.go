@@ -308,19 +308,27 @@ func ExampleReader_Read_cSV() {
 
 	const inFile = "/home/will/tmp/zip_data.csv" // source data
 	const tmpFile = "/home/will/tmp/tmp.csv"     // temp file to write data to for import
-	const table = "testing.income"               // ClickHouse destination table
+	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
 	con, err := chutils.NewConnect("http", "127.0.0.1", "tester", "testGoNow")
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer con.Close()
+	defer func() {
+		if con.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
 	f, err := os.Open(inFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	rdr := NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
-	defer rdr.Close()
+	defer func() {
+		if rdr.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
 	if e := rdr.Init(); e != nil {
 		log.Fatalln(err)
 	}
@@ -360,8 +368,16 @@ func ExampleReader_Read_cSV() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer fx.Close()
-	defer os.Remove(tmpFile)
+	defer func() {
+		if fx.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
+	defer func() {
+		if os.Remove(tmpFile) != nil {
+			log.Fatalln(err)
+		}
+	}()
 	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
 	if err := chutils.Load(rdr, wrtr); err != nil {
 		log.Fatalln(err)
@@ -371,7 +387,11 @@ func ExampleReader_Read_cSV() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer res.Close()
+	defer func() {
+		if res.Close() != nil {
+			log.Fatalln(err)
+		}
+	}()
 	for res.Next() {
 		var (
 			id    string
