@@ -169,7 +169,13 @@ func (rdr *Reader) getLine() (line []string, err error) {
 	if rdr.Width == 0 {
 		var l string
 		if l, err = rdr.rdr.ReadString(byte(rdr.EOL())); err != nil {
-			return nil, err
+			// Do not declare EOF until l is empty
+			if err != io.EOF || (l == "") {
+				return nil, err
+			}
+			// hit EOF without an EOL
+			l += "\n"
+			err = nil
 		}
 		// No quote string, so just split on Separator.
 		if rdr.Quote == 0 {

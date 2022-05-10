@@ -19,6 +19,10 @@ func (r *rstr) Close() error {
 }
 
 func NewVars(td *chutils.TableDef, data chutils.Row, valid chutils.Valid, validate bool) (interface{}, error) {
+	_ = td
+	_ = valid
+	_ = validate
+
 	var res string
 	switch data[0].(string) {
 	case "hello, mom":
@@ -46,7 +50,9 @@ func TestReader_Read(t *testing.T) {
 	for j := 0; j < len(input); j++ {
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := file.NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
-		rt1.Init()
+		if rt1.Init() != nil {
+			t.Errorf("unexpected Init error")
+		}
 		fd := &chutils.FieldDef{
 			Name:        "validation",
 			ChSpec:      chutils.ChField{Base: chutils.ChString},
@@ -74,7 +80,7 @@ func TestReader_Read(t *testing.T) {
 // Example 1
 func ExampleReader_Read() {
 	/*
-		Input file:
+		/home/test/data/input.csv:
 
 		x,y
 		1.0,2.0
@@ -82,7 +88,7 @@ func ExampleReader_Read() {
 		100.0, 100.0
 	*/
 
-	const myFile = "/home/test/data/input.csv"
+	const myFile = "/home/will/tmp/input.csv"
 	inFile, err := os.Open(myFile)
 	if err != nil {
 		log.Fatalln(err)
@@ -130,7 +136,7 @@ func ExampleReader_Read() {
 		log.Fatalln(err)
 	}
 	fmt.Println(data)
-	// Output: 		[[1 2 2] [3 4 12] [100 100 -1]]
+	// Output: 	[[1 2 2] [3 4 12] [100 100 -1]]
 }
 
 // Example : Column Locations Unknown

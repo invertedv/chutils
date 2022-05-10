@@ -2,8 +2,11 @@ package file
 
 import (
 	"errors"
+	"fmt"
 	"github.com/invertedv/chutils"
+	_ "github.com/mailru/go-clickhouse"
 	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +73,9 @@ func TestReader_Reset(t *testing.T) {
 			break
 		}
 
-		rt1.Reset()
+		if rt1.Reset() != nil {
+			t.Errorf("unexepcted Reset error")
+		}
 		r, _, e := rt1.Read(readcnt[j], false)
 		if e != nil {
 			t.Errorf("unexpected read error on case %d", j)
@@ -122,7 +127,9 @@ func TestReader_Read(t *testing.T) {
 			t.Errorf("unexpected Init error, case %d", j)
 			break
 		}
-		rt.Seek(0, 0)
+		if _, e := rt.Seek(0, 0); e != nil {
+			t.Errorf("unexpected Seek error")
+		}
 		if e := rt1.Seek(row[j]); e != nil {
 			log.Fatalln(e)
 		}
@@ -262,25 +269,125 @@ func TestWriter_Export(t *testing.T) {
 		t.Errorf("Init failed")
 		return
 	}
-	chutils.Export(rt1, wtr)
+	if chutils.Export(rt1, wtr) != nil {
+		t.Errorf("unexpected Export error")
+	}
 	if result != f.buf {
 		t.Errorf("expected %s got %s", result, f.buf)
 	}
 
 	// once we specify the type of a as ChInt, the single quote goes away
 	result = "1,'2'\n3,'4'\n5,'6'\n7,'8'\n9,'19'\n"
-	rt1.Reset()
+	if rt1.Reset() != nil {
+		t.Errorf("unexpected Reset error")
+	}
 	fd := rt1.TableSpec().FieldDefs[0]
 	fd.ChSpec.Base = chutils.ChInt
 	fd.ChSpec.Length = 16
 	f = &wstr{""}
 	wtr = NewWriter(f, "A", &con, ',', '\n', "table")
-	chutils.Export(rt1, wtr)
+	if chutils.Export(rt1, wtr) != nil {
+		t.Errorf("unexpected Export error")
+	}
 	if result != f.buf {
 		t.Errorf("expected %s got %s", result, f.buf)
 	}
 }
 
-func ExampleReader_Read() {
+// Loading a CSV, cleaning values and loading into ClickHouse using package file reader and writer
+func ExampleReader_Read_cSV() {
+	/*
+		/home/test/data/zip_data.csv:
+		id,zip,value
+		1A34,90210,20.8
+		1X88,43210,19.2
+		1B23,77810,NA
+		1r99,94043,100.4
+		1x09,hello,9.9
+	*/
+
+	const inFile = "/home/will/tmp/zip_data.csv" // source data
+	const tmpFile = "/home/will/tmp/tmp.csv"     // temp file to write data to for import
+	const table = "testing.income"               // ClickHouse destination table
+	var con *chutils.Connect
+	con, err := chutils.NewConnect("http", "127.0.0.1", "tester", "testGoNow")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer con.Close()
+	f, err := os.Open(inFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	rdr := NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
+	defer rdr.Close()
+	if e := rdr.Init(); e != nil {
+		log.Fatalln(err)
+	}
+	if e := rdr.TableSpec().Impute(rdr, 0, .95); e != nil {
+		log.Fatalln(e)
+	}
+
+	// Specify zip as FixedString(5) with a missing value of 00000
+	_, fd, err := rdr.TableSpec().Get("zip")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	// zip will impute to int if we don't make this change
+	fd.ChSpec.Base = chutils.ChFixedString
+	fd.ChSpec.Length = 5
+	fd.Missing = "00000"
+	legal := make(map[string]int)
+	legal["90210"], legal["43210"], legal["77810"], legal["94043"] = 1, 1, 1, 1
+	fd.Legal.Levels = &legal
+
+	// Specify value as having a range of [0,30] with a missing value of -1.0
+	_, fd, err = rdr.TableSpec().Get("value")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fd.Legal.HighLimit = 30.0
+	fd.Legal.LowLimit = 0.0
+	fd.Missing = -1.0
+
+	rdr.TableSpec().Engine = chutils.MergeTree
+	rdr.TableSpec().Key = "id"
+	if err := rdr.TableSpec().Create(con, table); err != nil {
+		log.Fatalln(err)
+	}
+
+	fx, err := os.Create(tmpFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer fx.Close()
+	defer os.Remove(tmpFile)
+	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
+	if err := chutils.Load(rdr, wrtr); err != nil {
+		log.Fatalln(err)
+	}
+	qry := fmt.Sprintf("SELECT * FROM %s", table)
+	res, err := con.Query(qry)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer res.Close()
+	for res.Next() {
+		var (
+			id    string
+			zip   string
+			value float64
+		)
+		if res.Scan(&id, &zip, &value) != nil {
+			log.Fatalln(err)
+		}
+		fmt.Println(id, zip, value)
+	}
+	// Output:
+	//1A34 90210 20.8
+	//1B23 77810 -1
+	//1X88 43210 19.2
+	//1r99 94043 -1
+	//1x09 00000 9.9
 
 }
