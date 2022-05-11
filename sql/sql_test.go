@@ -3,6 +3,7 @@ package sql
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
@@ -77,7 +78,7 @@ func TestReader_Read(t *testing.T) {
 	resBases := []chutils.ChType{chutils.ChString, chutils.ChFloat, chutils.ChFixedString, chutils.ChInt, chutils.ChDate}
 
 	// for sqlmock
-	coltype := []string{"String", "Float64", "FixedString(1)", "Int16", "Date"}
+	coltype := []string{"String", "Float64", "FixedString(1)", "Int32", "Date"}
 	examples := []interface{}{"hello", 1.0, "X", 1, "2020-01-02T00:00:00Z"}
 
 	// data
@@ -86,8 +87,8 @@ func TestReader_Read(t *testing.T) {
 		{"b", 2.0, "Y", 4, "junk"}}
 
 	expected := [][]interface{}{
-		{"a", 1.0, "X", 1, time.Date(2020, 1, 2, 0.0, 0.0, 0.0, 0.0, time.UTC)},
-		{"b", -1.0, "Y", 4, dtMiss}}
+		{"a", 1.0, "X", int32(1), time.Date(2020, 1, 2, 0.0, 0.0, 0.0, 0.0, time.UTC)},
+		{"b", -1.0, "Y", int32(4), dtMiss}}
 	expectedV := []chutils.Valid{{chutils.VPass, chutils.VPass, chutils.VPass, chutils.VPass, chutils.VPass},
 		{chutils.VPass, chutils.VValueFail, chutils.VPass, chutils.VPass, chutils.VTypeFail}}
 
@@ -139,24 +140,6 @@ func TestReader_Read(t *testing.T) {
 	if rdr.Reset() != nil {
 		t.Errorf("unexpected error in Reset")
 	}
-
-	data, _, err := rdr.Read(2, false)
-	for r := 0; r < len(expected); r++ {
-		for c := 0; c < len(data[r]); c++ {
-			s := fmt.Sprintf("%v", input[r][c])
-			d := data[r][c].(string)
-			_, fd, _ := rdr.TableSpec().Get(resNames[c])
-			// strip time out of date
-			if fd.ChSpec.Base == chutils.ChDate && len(d) > 10 {
-				d = d[0:10]
-				s = s[0:10]
-			}
-			if d != s {
-				t.Errorf("string read expected %s got %s", s, d)
-			}
-		}
-	}
-
 }
 
 func TestReader_Seek(t *testing.T) {
@@ -173,14 +156,14 @@ func TestReader_Seek(t *testing.T) {
 	resBases := []chutils.ChType{chutils.ChInt, chutils.ChString}
 
 	// for sqlmock
-	coltype := []string{"Int16", "String"}
+	coltype := []string{"Int32", "String"}
 	examples := []interface{}{1, "Hello"}
 
 	// data
 	input := [][]driver.Value{
 		{1, "a"}, {2, "b"}, {3, "c"}, {4, "d"}, {5, "e"}}
 	seekTo := []int{4, 2, 1, 10}
-	expected := []interface{}{4, 2, 1, "ERR"}
+	expected := []interface{}{int32(4), int32(2), int32(1), chutils.ErrSeek}
 
 	// build columns
 	cols := make([]*sqlmock.Column, 0)
@@ -206,8 +189,11 @@ func TestReader_Seek(t *testing.T) {
 			rows = rows.AddRow(input[j]...)
 		}
 		mock.ExpectQuery(`^SELECT \* FROM bbb`).WillReturnRows(rows)
-		if rdr.Seek(seekTo[ind]) != nil {
-			t.Errorf("unexpected error in Seek")
+		if e := rdr.Seek(seekTo[ind]); e != nil {
+			if errors.Unwrap(e) != chutils.ErrSeek || expected[ind] != chutils.ErrSeek {
+				t.Errorf("unexpected error in Seek")
+			}
+			continue
 		}
 		data, _, e := rdr.Read(1, true)
 		if e != nil {

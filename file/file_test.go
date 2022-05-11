@@ -151,19 +151,19 @@ func TestReader_Read(t *testing.T) {
 	// Test type conversions, HighLimit/LowLimit/levels legal values
 
 	// data
-	inputc := "a,b,c,d ,e,f,g,h,i,j\n 2000-01-03, 3.4,A  ,BD,42,2000/1/2,ABCD,10000.1,2030-01-01,Hi\n"
+	inputc := "a,b,c,d ,e,f,g,h,i,j\n 2000-01-03, 3.4,A  ,BD,42,1999/1/2,ABCD,10000.1,2030-01-01,Hi\n"
 	// values for FieldDef
 	field := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
 	base := []chutils.ChType{chutils.ChDate, chutils.ChFloat, chutils.ChFixedString, chutils.ChFixedString,
 		chutils.ChInt, chutils.ChDate, chutils.ChFixedString, chutils.ChFloat, chutils.ChDate, chutils.ChString}
-	length := []int{0, 64, 1, 2, 16, 0, 2, 64, 0, 0}
+	length := []int{0, 64, 1, 2, 64, 0, 2, 64, 0, 0}
 	datefmt := []string{"2006-01-02", "", "", "", "", "2006-01-02", "", "", "2006-01-02", ""}
 	dtmiss := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	dtmax, _ := time.Parse("2006-01-02", "2022-12-31")
 	missing := []interface{}{dtmiss, -1.0, "!", "X", -1, dtmiss, "!", -1.0, dtmiss, "0"}
-	maxes := []interface{}{dtmax, 1000.0, "", "", 100, dtmax, "", 1000.0, dtmax}
+	maxes := []interface{}{dtmax, 1000.0, "", "", int64(100), dtmax, "", 1000.0, dtmax}
 	dtmin, _ := time.Parse("2006-01-02", "2000-01-01")
-	mins := []interface{}{dtmin, 0.0, "", "", 0, dtmin, "", 0.0, dtmin}
+	mins := []interface{}{dtmin, 0.0, "", "", int64(0), dtmin, "", 0.0, dtmin}
 
 	mp := make(map[string]int)
 	mp["BD"] = 1
@@ -174,7 +174,7 @@ func TestReader_Read(t *testing.T) {
 	// test values
 	col = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
 	dt, _ := time.Parse("2006-01-02", "2000-01-03")
-	result1 := []interface{}{dt, 3.4, "A", "BD", 42, dtmiss, "!", -1.0, dtmiss, "X"}
+	result1 := []interface{}{dt, 3.4, "A", "BD", int64(42), dtmiss, "ABCD", -1.0, dtmiss, "X"}
 
 	rt := &rstr{*strings.NewReader(inputc)}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
@@ -200,10 +200,10 @@ func TestReader_Read(t *testing.T) {
 		}
 		if base[j] == chutils.ChDate {
 			if dx, ok := maxes[j].(time.Time); ok {
-				fd.Legal.LastDate = &dx
+				fd.Legal.HighLimit = &dx
 			}
 			if dx, ok := mins[j].(time.Time); ok {
-				fd.Legal.FirstDate = &dx
+				fd.Legal.LowLimit = &dx
 			}
 		}
 	}
@@ -226,7 +226,7 @@ func TestReader_Read(t *testing.T) {
 				t.Errorf("Type test, expected %v got %v", result1[j], val)
 			}
 		case chutils.ChInt:
-			if val.(int) != result1[j].(int) {
+			if val.(int64) != result1[j].(int64) {
 				t.Errorf("Type test, expected %v got %v", result1[j], val)
 			}
 		case chutils.ChFixedString:
@@ -262,6 +262,7 @@ func TestWriter_Export(t *testing.T) {
 	input := []string{"a,b\n1,2\n3,4\n5,6\n7,8\n9,19\n"}
 
 	result := "'1','2'\n'3','4'\n'5','6'\n'7','8'\n'9','19'\n"
+	//	result := "1,2\n3,4\n5,6\n7,8\n9,19\n"
 
 	rt := &rstr{*strings.NewReader(input[0])}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
@@ -269,6 +270,10 @@ func TestWriter_Export(t *testing.T) {
 		t.Errorf("Init failed")
 		return
 	}
+	_, fdx, _ := rt1.TableSpec().Get("b")
+	fdx.ChSpec.Base = chutils.ChString
+	_, fdx, _ = rt1.TableSpec().Get("a")
+	fdx.ChSpec.Base = chutils.ChString
 	if chutils.Export(rt1, wtr) != nil {
 		t.Errorf("unexpected Export error")
 	}
@@ -277,13 +282,15 @@ func TestWriter_Export(t *testing.T) {
 	}
 
 	// once we specify the type of a as ChInt, the single quote goes away
+	fdx.ChSpec.Base = chutils.ChInt
+	fdx.ChSpec.Length = 32
 	result = "1,'2'\n3,'4'\n5,'6'\n7,'8'\n9,'19'\n"
 	if rt1.Reset() != nil {
 		t.Errorf("unexpected Reset error")
 	}
 	fd := rt1.TableSpec().FieldDefs[0]
 	fd.ChSpec.Base = chutils.ChInt
-	fd.ChSpec.Length = 16
+	fd.ChSpec.Length = 64
 	f = &wstr{""}
 	wtr = NewWriter(f, "A", &con, ',', '\n', "table")
 	if chutils.Export(rt1, wtr) != nil {

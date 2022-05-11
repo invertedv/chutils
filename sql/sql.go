@@ -58,7 +58,6 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 // Init initializes Reader.TableDef by looking at the output of the query
 func (rdr *Reader) Init() error {
 	var rows *sql.Rows
-	var e error = nil
 	if rdr.Sql == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
@@ -140,7 +139,8 @@ func (rdr *Reader) Init() error {
 		fds[ind] = fd
 	}
 	rdr.tableSpec.FieldDefs = fds
-	return e
+
+	return rdr.tableSpec.Check()
 }
 
 // Must type the interface for Scan to correctly read arrays
@@ -150,12 +150,6 @@ func typer(inType string) (ii interface{}) {
 		return make([]float32, 0)
 	case "[]float64":
 		return make([]float64, 0)
-	case "[]int":
-		return make([]int, 0)
-	case "[]int8":
-		return make([]int8, 0)
-	case "[]int16":
-		return make([]int16, 0)
 	case "[]int32":
 		return make([]int32, 0)
 	case "[]int64":
@@ -205,6 +199,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 
 	for rowCount := 0; rowCount < nTarget; rowCount++ {
 		if !rdr.data.Next() {
+			// TODO: delete this?
 			if e := rdr.Reset(); e != nil {
 				return nil, nil, e
 			}
@@ -217,8 +212,6 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 		}
 		row := make(chutils.Row, len(values))
 		for ind := 0; ind < len(values); ind++ {
-			rv := *(values[ind]).(*interface{})
-			fmt.Println(rv)
 			row[ind] = *(values[ind].(*interface{}))
 		}
 
@@ -324,7 +317,7 @@ func (rdr *Reader) Seek(lineNo int) error {
 	}
 	for cnt := 0; cnt < lineNo-1; cnt++ {
 		if !rdr.data.Next() {
-			return chutils.Wrapper(chutils.ErrSQL, "seek past end of table")
+			return chutils.Wrapper(chutils.ErrSeek, "seek past end of table")
 		}
 	}
 	return nil

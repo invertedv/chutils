@@ -215,11 +215,11 @@ func (t ChField) Converter(inValue interface{}, missing interface{}) (outValue i
 
 // LegalValues holds bounds and lists of legal values for a ClickHouse field
 type LegalValues struct {
-	LowLimit  interface{}     // Minimum legal value for types Int, Float
-	HighLimit interface{}     // Maximum legal value for types Int, Float
-	FirstDate *time.Time      // Earliest legal date for Date
-	LastDate  *time.Time      // Last legal date for type Date
-	Levels    *map[string]int // Legal values for types String, FixedString
+	LowLimit  interface{} // Minimum legal value for types Int, Float
+	HighLimit interface{} // Maximum legal value for types Int, Float
+	//	FirstDate *time.Time      // Earliest legal date for Date
+	//	LastDate  *time.Time      // Last legal date for type Date
+	Levels *map[string]int // Legal values for types String, FixedString
 }
 
 // NewLegalValues creates a new LegalValues type
@@ -228,107 +228,38 @@ func NewLegalValues() *LegalValues {
 	return &LegalValues{Levels: &x}
 }
 
-// Check checks whether checkVal is a legal value
-func (l *LegalValues) Check(checkVal interface{}, missing interface{}) (outVal interface{}, ok bool) {
+// CheckRange checks whether checkVal is a legal value
+func (fd *FieldDef) CheckRange(checkVal interface{}) (outVal interface{}, ok bool) {
 
 	if reflect.ValueOf(checkVal).Kind() == reflect.Slice {
 		ok = true
 		it := NewIterator(checkVal)
 		for it.Next() {
-			ov, ok1 := l.Check(it.Item, missing)
+			ov, ok1 := fd.CheckRange(it.Item)
 			it.Append(ov)
 			ok = ok && ok1
 		}
 		return it.NewItems, ok
 	}
+
 	ok, outVal = true, checkVal
 	switch val := checkVal.(type) {
 	case string:
-		if l.Levels == nil || len(*l.Levels) == 0 {
+		if fd.Legal.Levels == nil || len(*fd.Legal.Levels) == 0 {
 			return
 		}
 		// check if this is supposed to be a numeric field.
-		for rx := range *l.Levels {
+		for rx := range *fd.Legal.Levels {
 			if val == rx {
 				return
 			}
 		}
-	case float64:
-		if l.LowLimit == nil && l.HighLimit == nil {
+	default:
+		if Compare(outVal, fd.Legal.LowLimit, fd.ChSpec) && Compare(fd.Legal.HighLimit, outVal, fd.ChSpec) {
 			return
-		}
-		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, okLow := l.LowLimit.(float64)
-		high, okHigh := l.HighLimit.(float64)
-		if okLow && okHigh {
-			if low == high {
-				return
-			}
-			// Do range check
-			if val >= low && val <= high {
-				return
-			}
-		}
-	case float32:
-		if l.LowLimit == nil && l.HighLimit == nil {
-			return
-		}
-		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, okLow := l.LowLimit.(float32)
-		high, okHigh := l.HighLimit.(float32)
-		if okLow && okHigh {
-			if low == high {
-				return
-			}
-			// Do range check
-			if val >= low && val <= high {
-				return
-			}
-		}
-	case int64:
-		if l.LowLimit == nil && l.HighLimit == nil {
-			return
-		}
-		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, okLow := l.LowLimit.(int64)
-		high, okHigh := l.HighLimit.(int64)
-		if okLow && okHigh {
-			if low == high {
-				return
-			}
-			// Do range check
-			if val >= low && val <= high {
-				return
-			}
-		}
-	case int32:
-		if l.LowLimit == nil && l.HighLimit == nil {
-			return
-		}
-		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, okLow := l.LowLimit.(int32)
-		high, okHigh := l.HighLimit.(int32)
-		if okLow && okHigh {
-			if low == high {
-				return
-			}
-			// Do range check
-			if val >= low && val <= high {
-				return
-			}
-		}
-	case time.Time:
-		if l.FirstDate == nil && l.LastDate == nil {
-			return
-		}
-		// These will be the correct type
-		if l.FirstDate != nil && l.LastDate != nil {
-			if val.Sub(*l.FirstDate) >= 0 && (*l).LastDate.Sub(val) >= 0 {
-				return
-			}
 		}
 	}
-	return missing, false
+	return fd.Missing, false
 }
 
 // FindType determines the ChType of newVal.  If the target type is already set, this is a noop.
@@ -403,7 +334,7 @@ func (fd *FieldDef) Validator(inValue interface{}) (outValue interface{}, status
 		return
 	}
 
-	if outValue, ok = fd.Legal.Check(outValue, fd.Missing); !ok {
+	if outValue, ok = fd.CheckRange(outValue); !ok {
 		status = VValueFail
 	}
 	return
@@ -503,8 +434,8 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 			switch {
 			case counts[ind].dates >= thresh:
 				fd.ChSpec.Base, fd.ChSpec.Length = ChDate, 0
-				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
-				fd.Legal.FirstDate, fd.Legal.LastDate = counts[ind].legal.FirstDate, counts[ind].legal.LastDate
+				//				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
+				//				fd.Legal.LowLimit, fd.Legal.HighLimit = counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
 				fd.Missing = DateMissing
 			case counts[ind].ints >= thresh:
 				fd.ChSpec.Base, fd.ChSpec.Length = ChInt, 64
@@ -568,6 +499,47 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
 	_, err := conn.Exec(qry)
 	return err
+}
+
+// Check verifies that the fields are of the type chutils supports.  Check also converts, if needed, the
+// Legal.HighLimit and Legal.LowLimit interfaces to the correct type
+func (td *TableDef) Check() error {
+	for _, fd := range td.FieldDefs {
+		switch t := fd.ChSpec.Base; t {
+		case ChFixedString:
+			if fd.ChSpec.Length == 0 {
+				return Wrapper(ErrFields, "FixedString must have a length")
+			}
+		case ChFloat, ChInt:
+			var x interface{}
+			var ok bool
+			if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 {
+				return Wrapper(ErrFields, "Floats and Ints must have length 32 or 64")
+			}
+			if fd.Legal.HighLimit == nil && fd.Legal.LowLimit == nil {
+				continue
+			}
+			if x, ok = Convert(fd.Legal.HighLimit, fd.ChSpec); !ok {
+				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce HighLimit %v to %v", fd.Legal.HighLimit, t))
+			}
+			fd.Legal.HighLimit = x
+			if x, ok = Convert(fd.Legal.LowLimit, fd.ChSpec); !ok {
+				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce LowLimit %v to %v", fd.Legal.LowLimit, t))
+			}
+			fd.Legal.LowLimit = x
+			if fd.Missing == nil {
+				return Wrapper(ErrFields, "cannot have populated LowLimit/HighLimit and nil Missing")
+			}
+			if !Compare(fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec) {
+				return Wrapper(ErrFields, fmt.Sprintf("LowLimit %v >= HighLimit %v", fd.Legal.LowLimit, fd.Legal.HighLimit))
+			}
+			if x, ok = Convert(fd.Missing, fd.ChSpec); !ok {
+				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce Missing value %v to %v", fd.Missing, t))
+			}
+			fd.Missing = x
+		}
+	}
+	return nil
 }
 
 func writeElement(el interface{}, char string) []byte {

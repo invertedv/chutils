@@ -1,6 +1,7 @@
 package chutils
 
 import (
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -108,8 +109,8 @@ func TestTableDef_Impute(t *testing.T) {
 func TestFieldDef_Validator(t *testing.T) {
 	td := buildTableDef()
 	types := []ChType{ChInt, ChFloat, ChString, ChDate}
-	highs := []interface{}{3, 5.5, ""}
-	lows := []interface{}{0, 1.0, ""}
+	highs := []interface{}{int64(3), 5.5, ""}
+	lows := []interface{}{int64(0), 1.0, ""}
 	inputs := [][]interface{}{{"1", "a", "1.4", "111"},
 		{"1.1", "a", "-10.0"},
 		{"hello", "abc"},
@@ -126,7 +127,7 @@ func TestFieldDef_Validator(t *testing.T) {
 		fd.ChSpec.Base = ty
 		switch ty {
 		case ChInt, ChFloat:
-			fd.Legal.HighLimit, fd.Legal.LowLimit = highs[r], lows[r]
+			fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec.Length = highs[r], lows[r], 64
 		case ChString:
 			levels := make(map[string]int)
 			levels["abc"] = 1
@@ -135,14 +136,14 @@ func TestFieldDef_Validator(t *testing.T) {
 		case ChDate:
 			fd.ChSpec.DateFormat = "2006/01/02"
 			dt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-			fd.Legal.FirstDate = &dt
+			fd.Legal.LowLimit = &dt
 			dt1 := time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)
-			fd.Legal.LastDate = &dt1
-
+			fd.Legal.HighLimit = &dt1
 		}
 		for c := 0; c < len(inputs[r]); c++ {
 			_, status := fd.Validator(inputs[r][c])
 			if status != expected[r][c] {
+				fmt.Println(c, inputs[r][c])
 				t.Errorf("expected %v got %v", expected[r][c], status)
 			}
 		}
