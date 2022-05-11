@@ -156,6 +156,11 @@ type Iterator struct {
 	ind      int
 }
 
+func NewIterator(data interface{}) *Iterator {
+	return &Iterator{data: data}
+}
+
+// Append appends an item to a new slice that has the same underlying type as the data
 func (i *Iterator) Append(v interface{}) {
 	switch i.data.(type) {
 	case []float32:

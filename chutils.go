@@ -197,7 +197,7 @@ type ChField struct {
 func (t ChField) Converter(inValue interface{}, missing interface{}) (outValue interface{}, ok bool) {
 	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
 		ok = true
-		it := &Iterator{data: inValue}
+		it := NewIterator(inValue)
 		for it.Next() {
 			outV, ok1 := Convert(it.Item, t)
 			if !ok1 {
@@ -233,7 +233,7 @@ func (l *LegalValues) Check(checkVal interface{}, missing interface{}) (outVal i
 
 	if reflect.ValueOf(checkVal).Kind() == reflect.Slice {
 		ok = true
-		it := &Iterator{data: checkVal}
+		it := NewIterator(checkVal)
 		for it.Next() {
 			ov, ok1 := l.Check(it.Item, missing)
 			it.Append(ov)
@@ -585,7 +585,7 @@ func writeElement(el interface{}, char string) []byte {
 
 func writeArray(el interface{}, char string) (line []byte) {
 	line = []byte("array(")
-	it := &Iterator{data: el}
+	it := NewIterator(el)
 	for it.Next() {
 		line = append(line, writeElement(it.Item, ",")...)
 	}
