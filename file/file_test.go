@@ -297,6 +297,19 @@ func TestWriter_Export(t *testing.T) {
 // Loading a CSV, cleaning values and loading into ClickHouse using package file reader and writer
 func ExampleReader_Read_cSV() {
 	/*
+
+		If you haven't created the table first, you'll get this error simply importing the file via clickhouse-client
+
+		Code: 60. DB::Exception: Received from 127.0.0.1:9000. DB::Exception: Table testing.values doesn't exist. (UNKNOWN_TABLE)
+
+		Once the table exists, the clickhouse-client approach produces this error:
+
+		Row 3:
+		Column 0,   name: id,    type: String,         parsed text: "1B23"
+		Column 1,   name: zip,   type: FixedString(5), parsed text: "77810"
+		Column 2,   name: value, type: Float64,        parsed text: "NA"ERROR
+		Code: 27. DB::Exception: Cannot parse NaN. (CANNOT_PARSE_INPUT_ASSERTION_FAILED) (version 22.4.5.9 (official build))
+
 		/home/test/data/zip_data.csv:
 		id,zip,value
 		1A34,90210,20.8

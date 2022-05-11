@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"github.com/invertedv/chutils"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +67,9 @@ func (rdr *Reader) Init() error {
 	if err != nil {
 		return err
 	}
-	defer func() { e = rows.Close() }()
+	defer func() {
+		_ = rows.Close()
+	}()
 	ct, err := rows.ColumnTypes()
 	if err != nil {
 		return nil
@@ -83,11 +84,17 @@ func (rdr *Reader) Init() error {
 			DateFormat: "",
 		}
 		tn := c.DatabaseTypeName()
+		if strings.Index(tn, "Array") >= 0 {
+			chf.OuterFunc = "Array"
+			tn = tn[6 : len(tn)-1]
+		}
 		if strings.Index(tn, "Nullable") >= 0 {
 			chf.OuterFunc = "Nullable"
+			tn = tn[9 : len(tn)-1]
 		}
 		if strings.Index(tn, "LowCardinality") >= 0 {
 			chf.OuterFunc = "LowCardinality"
+			tn = tn[15 : len(tn)-1]
 		}
 		types := []string{"Date", "Int", "Float", "FixedString", "String"}
 		chtypes := []chutils.ChType{chutils.ChDate, chutils.ChInt, chutils.ChFloat, chutils.ChFixedString, chutils.ChString}
@@ -136,6 +143,31 @@ func (rdr *Reader) Init() error {
 	return e
 }
 
+// Must type the interface for Scan to correctly read arrays
+func typer(inType string) (ii interface{}) {
+	switch inType {
+	case "[]float32":
+		return make([]float32, 0)
+	case "[]float64":
+		return make([]float64, 0)
+	case "[]int":
+		return make([]int, 0)
+	case "[]int8":
+		return make([]int8, 0)
+	case "[]int16":
+		return make([]int16, 0)
+	case "[]int32":
+		return make([]int32, 0)
+	case "[]int64":
+		return make([]int64, 0)
+	case "[]string":
+		return make([]string, 0)
+	case "[]time.Time":
+		return make([]time.Time, 0)
+	}
+	return
+}
+
 // Read reads nTarget rows.  If nTarget == 0, the entire result set is returned.
 //
 // If validation == true:
@@ -148,6 +180,62 @@ func (rdr *Reader) Init() error {
 //   - The return slice valid is nil
 //   - The fields are returned as strings.
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
+	data = nil
+	valid = nil
+	if rdr.TableSpec() == nil {
+		return nil, nil, chutils.Wrapper(chutils.ErrFields, "must run Init before read")
+	}
+	if rdr.data == nil {
+		if rdr.data, err = rdr.conn.Query(rdr.Sql); err != nil {
+			return nil, nil, err
+		}
+	}
+	cols, err := rdr.data.Columns()
+	if err != nil {
+		return
+	}
+	ncols := len(cols)
+
+	var values = make([]interface{}, ncols)
+	ct, _ := rdr.data.ColumnTypes()
+	for i, c := range ct {
+		ii := typer(c.ScanType().String())
+		values[i] = &ii
+	}
+
+	for rowCount := 0; rowCount < nTarget; rowCount++ {
+		if !rdr.data.Next() {
+			if e := rdr.Reset(); e != nil {
+				return nil, nil, e
+			}
+			return data, valid, io.EOF
+		}
+		rdr.RowsRead++
+		err = rdr.data.Scan(values...)
+		if err != nil {
+			return
+		}
+		row := make(chutils.Row, len(values))
+		for ind := 0; ind < len(values); ind++ {
+			rv := *(values[ind]).(*interface{})
+			fmt.Println(rv)
+			row[ind] = *(values[ind].(*interface{}))
+		}
+
+		if validate && rdr.TableSpec().FieldDefs != nil {
+			vrow := make(chutils.Valid, ncols)
+			for ind := 0; ind < ncols; ind++ {
+				outValue, stat := rdr.TableSpec().FieldDefs[ind].Validator(row[ind])
+				row[ind] = outValue
+				vrow[ind] = stat
+			}
+			valid = append(valid, vrow)
+		}
+		data = append(data, row)
+	}
+	return
+}
+func (rdr *Reader) ReadOld(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
 	valid = nil
 	if rdr.data == nil {
@@ -253,9 +341,12 @@ func (rdr *Reader) Close() error {
 
 // Insert executes Reader.Sql and inserts the result into Reader.Name
 func (rdr *Reader) Insert() error {
+	if rdr.Name == "" {
+		return chutils.Wrapper(chutils.ErrSQL, "Reader Name field is empty")
+	}
 	qry := fmt.Sprintf("INSERT INTO %s %s", rdr.Name, rdr.Sql)
 	if _, err := rdr.conn.Exec(qry); err != nil {
-		log.Fatalln(err)
+		return err
 	}
 	return nil
 }

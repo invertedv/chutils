@@ -56,6 +56,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"runtime"
 	"strconv"
 	"time"
@@ -193,69 +194,23 @@ type ChField struct {
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
-func (t ChField) Converter(inValue interface{}) (outValue interface{}, ok bool) {
-	var err error
-	outValue = inValue
-	switch t.Base {
-	case ChString, ChFixedString:
-		switch x := inValue.(type) {
-		case float64, float32, int:
-			outValue = fmt.Sprintf("%v", x)
-		}
-		if t.Base == ChFixedString && len(inValue.(string)) > t.Length {
-			return nil, false
-		}
-	case ChFloat:
-		switch x := inValue.(type) {
-		case string:
-			outValue, err = strconv.ParseFloat(x, t.Length)
-			if err != nil {
-				return nil, false
+func (t ChField) Converter(inValue interface{}, missing interface{}) (outValue interface{}, ok bool) {
+	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
+		ok = true
+		it := &Iterator{data: inValue}
+		for it.Next() {
+			outV, ok1 := Convert(it.Item, t)
+			if !ok1 {
+				outV = missing
 			}
-		case int, float32, int8, int16, int32, int64:
-			outValue, err = strconv.ParseFloat(fmt.Sprintf("%d", x), t.Length)
-		case float64:
-		default:
-			return nil, false
+			it.Append(outV)
+			ok = ok && ok1
 		}
-	case ChInt:
-		switch x := (inValue).(type) {
-		case string:
-			outValue, err = strconv.ParseInt(x, 10, t.Length)
-			if err != nil {
-				return nil, false
-			}
-			outValue = int(outValue.(int64))
-		case float64, float32, int8, int16, int32, int64:
-			outValue, err = strconv.ParseInt(fmt.Sprintf("%v", x), 10, t.Length)
-			if err != nil {
-				return nil, false
-			}
-			outValue = int(outValue.(int64))
-		case int:
-		default:
-			return nil, false
-		}
-	case ChDate:
-		switch x := (inValue).(type) {
-		case string:
-			var outDate time.Time
-			outDate, err = time.Parse(t.DateFormat, x)
-			outValue = outDate
-			if err != nil {
-				return nil, false
-			}
-		case float64, float32, int, int8, int16, int32, int64:
-			outValue, err = time.Parse(t.DateFormat, fmt.Sprintf("%v", x))
-			if err != nil {
-				return nil, false
-			}
-		case time.Time:
-		default:
-			return nil, false
-		}
+		outValue = it.NewItems
+		return
 	}
-	return outValue, true
+	outValue, ok = Convert(inValue, t)
+	return
 }
 
 // LegalValues holds bounds and lists of legal values for a ClickHouse field
@@ -274,8 +229,19 @@ func NewLegalValues() *LegalValues {
 }
 
 // Check checks whether checkVal is a legal value
-func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
-	ok = true
+func (l *LegalValues) Check(checkVal interface{}, missing interface{}) (outVal interface{}, ok bool) {
+
+	if reflect.ValueOf(checkVal).Kind() == reflect.Slice {
+		ok = true
+		it := &Iterator{data: checkVal}
+		for it.Next() {
+			ov, ok1 := l.Check(it.Item, missing)
+			it.Append(ov)
+			ok = ok && ok1
+		}
+		return it.NewItems, ok
+	}
+	ok, outVal = true, checkVal
 	switch val := checkVal.(type) {
 	case string:
 		if l.Levels == nil || len(*l.Levels) == 0 {
@@ -303,13 +269,45 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 				return
 			}
 		}
-	case int:
+	case float32:
 		if l.LowLimit == nil && l.HighLimit == nil {
 			return
 		}
 		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
-		low, okLow := l.LowLimit.(int)
-		high, okHigh := l.HighLimit.(int)
+		low, okLow := l.LowLimit.(float32)
+		high, okHigh := l.HighLimit.(float32)
+		if okLow && okHigh {
+			if low == high {
+				return
+			}
+			// Do range check
+			if val >= low && val <= high {
+				return
+			}
+		}
+	case int64:
+		if l.LowLimit == nil && l.HighLimit == nil {
+			return
+		}
+		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
+		low, okLow := l.LowLimit.(int64)
+		high, okHigh := l.HighLimit.(int64)
+		if okLow && okHigh {
+			if low == high {
+				return
+			}
+			// Do range check
+			if val >= low && val <= high {
+				return
+			}
+		}
+	case int32:
+		if l.LowLimit == nil && l.HighLimit == nil {
+			return
+		}
+		// if l.LowLimit and l.HighLimit aren't the correct type, then fail
+		low, okLow := l.LowLimit.(int32)
+		high, okHigh := l.HighLimit.(int32)
 		if okLow && okHigh {
 			if low == high {
 				return
@@ -330,8 +328,7 @@ func (l *LegalValues) Check(checkVal interface{}) (ok bool) {
 			}
 		}
 	}
-	ok = false
-	return
+	return missing, false
 }
 
 // FindType determines the ChType of newVal.  If the target type is already set, this is a noop.
@@ -399,18 +396,16 @@ type FieldDef struct {
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}) (outValue interface{}, status Status) {
 	status = VPass
-	outValue, ok := fd.ChSpec.Converter(inValue)
+	outValue, ok := fd.ChSpec.Converter(inValue, fd.Missing)
 	if !ok {
 		status = VTypeFail
 		outValue = fd.Missing
 		return
 	}
 
-	if fd.Legal.Check(outValue) {
-		return
+	if outValue, ok = fd.Legal.Check(outValue, fd.Missing); !ok {
+		status = VValueFail
 	}
-	outValue = fd.Missing
-	status = VValueFail
 	return
 }
 
@@ -525,7 +520,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 		}
 		switch fd.ChSpec.Base {
 		case ChInt:
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0, 0
+			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int64(0), int64(0)
 		case ChFloat:
 			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
 		default:
@@ -575,6 +570,30 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	return err
 }
 
+func writeElement(el interface{}, char string) []byte {
+	switch v := el.(type) {
+	case string:
+		return []byte(fmt.Sprintf("'%s'%s", v, char))
+	case time.Time:
+		return []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))
+	case float64, float32:
+		return []byte(fmt.Sprintf("%0.2f%s", v, char))
+	default:
+		return []byte(fmt.Sprintf("%v%s", v, char))
+	}
+}
+
+func writeArray(el interface{}, char string) (line []byte) {
+	line = []byte("array(")
+	it := &Iterator{data: el}
+	for it.Next() {
+		line = append(line, writeElement(it.Item, ",")...)
+	}
+	line[len(line)-1] = ')'
+	line = append(line, char...)
+	return
+}
+
 // Export transfers the contents of rdr to wrtr.
 func Export(rdr Input, wrtr Output) error {
 
@@ -600,13 +619,10 @@ func Export(rdr Input, wrtr Output) error {
 					char = ""
 				}
 			}
-			switch v := data[0][c].(type) {
-			case string:
-				line = append(line, []byte(fmt.Sprintf("'%s'%s", v, char))...)
-			case time.Time:
-				line = append(line, []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))...)
-			default:
-				line = append(line, []byte(fmt.Sprintf("%v%s", v, char))...)
+			if reflect.ValueOf(data[0][c]).Kind() == reflect.Slice {
+				line = append(line, writeArray(data[0][c], char)...)
+			} else {
+				line = append(line, writeElement(data[0][c], char)...)
 			}
 		}
 		if _, err = wrtr.Write(line); err != nil {
