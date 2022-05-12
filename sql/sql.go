@@ -56,24 +56,24 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 }
 
 // Init initializes Reader.TableDef by looking at the output of the query
-func (rdr *Reader) Init() error {
+func (rdr *Reader) Init() (err error) {
 	var rows *sql.Rows
 	if rdr.Sql == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
 	qry := "SELECT * FROM (" + rdr.Sql + ") LIMIT 1"
-	rows, err := rdr.conn.Query(qry)
-	if err != nil {
-		return err
+	if rows, err = rdr.conn.Query(qry); err != nil {
+		return
 	}
 	defer func() {
-		_ = rows.Close()
+		err = rows.Close()
 	}()
 	ct, err := rows.ColumnTypes()
 	if err != nil {
 		return nil
 	}
 
+	// work through column types to build slice of FieldDefs
 	fds := make(map[int]*chutils.FieldDef)
 	for ind, c := range ct {
 		chf := chutils.ChField{
@@ -82,16 +82,17 @@ func (rdr *Reader) Init() error {
 			OuterFunc:  "",
 			DateFormat: "",
 		}
+		// parse DataBaseTypeName
 		tn := c.DatabaseTypeName()
-		if strings.Index(tn, "Array") >= 0 {
+		if strings.Contains(tn, "Array") {
 			chf.OuterFunc = "Array"
 			tn = tn[6 : len(tn)-1]
 		}
-		if strings.Index(tn, "Nullable") >= 0 {
+		if strings.Contains(tn, "Nullable") {
 			chf.OuterFunc = "Nullable"
 			tn = tn[9 : len(tn)-1]
 		}
-		if strings.Index(tn, "LowCardinality") >= 0 {
+		if strings.Contains(tn, "LowCardinality") {
 			chf.OuterFunc = "LowCardinality"
 			tn = tn[15 : len(tn)-1]
 		}
@@ -110,12 +111,13 @@ func (rdr *Reader) Init() error {
 			// ClickHouse connector brings in dates with this format
 			chf.DateFormat = time.RFC3339
 		case chutils.ChInt, chutils.ChFloat:
-			l, err := strconv.ParseInt(trailing, 10, 32)
-			if err != nil {
-				return err
+			var l int64
+			if l, err = strconv.ParseInt(trailing, 10, 32); err != nil {
+				return
 			}
 			chf.Length = int(l)
 		case chutils.ChFixedString:
+			var l int64
 			// strip off leading/trailing parens
 			for len(trailing) > 0 && trailing[0] == '(' {
 				trailing = trailing[1:]
@@ -123,9 +125,8 @@ func (rdr *Reader) Init() error {
 			for len(trailing) > 0 && trailing[len(trailing)-1] == ')' {
 				trailing = trailing[:len(trailing)-1]
 			}
-			l, err := strconv.ParseInt(trailing, 10, 32)
-			if err != nil {
-				return err
+			if l, err = strconv.ParseInt(trailing, 10, 32); err != nil {
+				return
 			}
 			chf.Length = int(l)
 		}
@@ -134,13 +135,13 @@ func (rdr *Reader) Init() error {
 			Name:        c.Name(),
 			ChSpec:      chf,
 			Description: "",
-			Legal:       &chutils.LegalValues{},
+			Legal:       chutils.NewLegalValues(),
 		}
 		fds[ind] = fd
 	}
 	rdr.tableSpec.FieldDefs = fds
 
-	return rdr.tableSpec.Check()
+	return rdr.TableSpec().Check()
 }
 
 // Must type the interface for Scan to correctly read arrays
@@ -170,9 +171,8 @@ func typer(inType string) (ii interface{}) {
 //   - data is returned with the fields appropriately typed.
 //
 // If validation == false:
-//   - The data is not validated.
+//   - data is returned with the fields appropriately typed.
 //   - The return slice valid is nil
-//   - The fields are returned as strings.
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
 	valid = nil
@@ -206,8 +206,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 			return data, valid, io.EOF
 		}
 		rdr.RowsRead++
-		err = rdr.data.Scan(values...)
-		if err != nil {
+		if err = rdr.data.Scan(values...); err != nil {
 			return
 		}
 		row := make(chutils.Row, len(values))
@@ -228,6 +227,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 	}
 	return
 }
+
 func (rdr *Reader) ReadOld(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
 	valid = nil
@@ -305,7 +305,6 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 		if err = res.Scan(&numLines); err != nil {
 			numLines = 0
 		}
-		return
 	}
 	return
 }
@@ -338,10 +337,8 @@ func (rdr *Reader) Insert() error {
 		return chutils.Wrapper(chutils.ErrSQL, "Reader Name field is empty")
 	}
 	qry := fmt.Sprintf("INSERT INTO %s %s", rdr.Name, rdr.Sql)
-	if _, err := rdr.conn.Exec(qry); err != nil {
-		return err
-	}
-	return nil
+	_, err := rdr.conn.Exec(qry)
+	return err
 }
 
 // Writer implements chutils.Output
@@ -354,11 +351,10 @@ type Writer struct {
 }
 
 // Write writes the byte slice to Writer.hold. The byte slice is a single row of the output
-// table with the fields being comma separated.
 func (wtr *Writer) Write(b []byte) (n int, err error) {
 	n = len(b)
 	if len(wtr.hold) > 1 {
-		wtr.hold = append(wtr.hold, ')', ',', '(')
+		wtr.hold = append(wtr.hold, ')', byte(wtr.Separator()), '(')
 	}
 	wtr.hold = append(wtr.hold, b...)
 	return n, nil

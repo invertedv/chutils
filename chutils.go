@@ -62,6 +62,8 @@ import (
 	"time"
 )
 
+// TODO: version numbers
+
 // Missing values used when the user does not supply them
 var (
 	DateMissing  = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -85,9 +87,9 @@ type Input interface {
 
 // The Output interface specifies requirements for writing data.
 type Output interface {
-	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written
+	Write(b []byte) (n int, err error) // Write byte array, n is # of bytes written. Writes do not go to ClickHouse (see Insert)
 	Name() string                      // Name of output (file, table)
-	Insert() error                     // Inserts into ClickHouse Table
+	Insert() error                     // Inserts into ClickHouse
 	Separator() rune                   // Separator returns the field separator
 	EOL() rune                         // EOL returns the End-of-line character
 	Close() error                      // Close writer
@@ -194,23 +196,13 @@ type ChField struct {
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
-func (t ChField) Converter(inValue interface{}, missing interface{}) (outValue interface{}, ok bool) {
-	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
-		ok = true
-		it := NewIterator(inValue)
-		for it.Next() {
-			outV, ok1 := Convert(it.Item, t)
-			if !ok1 {
-				outV = missing
-			}
-			it.Append(outV)
-			ok = ok && ok1
-		}
-		outValue = it.NewItems
-		return
+func (t ChField) Converter(inValue interface{}, missing interface{}) (interface{}, Status) {
+
+	outValue, ok := convert(inValue, t)
+	if !ok {
+		return missing, VTypeFail
 	}
-	outValue, ok = Convert(inValue, t)
-	return
+	return outValue, VPass
 }
 
 // LegalValues holds bounds and lists of legal values for a ClickHouse field
@@ -228,38 +220,27 @@ func NewLegalValues() *LegalValues {
 	return &LegalValues{Levels: &x}
 }
 
-// CheckRange checks whether checkVal is a legal value
-func (fd *FieldDef) CheckRange(checkVal interface{}) (outVal interface{}, ok bool) {
+// CheckRange checks whether checkVal is a legal value. Returns fd.Missing, if not.
+func (fd *FieldDef) CheckRange(checkVal interface{}) (interface{}, Status) {
 
-	if reflect.ValueOf(checkVal).Kind() == reflect.Slice {
-		ok = true
-		it := NewIterator(checkVal)
-		for it.Next() {
-			ov, ok1 := fd.CheckRange(it.Item)
-			it.Append(ov)
-			ok = ok && ok1
-		}
-		return it.NewItems, ok
-	}
-
-	ok, outVal = true, checkVal
 	switch val := checkVal.(type) {
 	case string:
+		// nothing to do?
 		if fd.Legal.Levels == nil || len(*fd.Legal.Levels) == 0 {
-			return
+			return checkVal, VPass
 		}
 		// check if this is supposed to be a numeric field.
 		for rx := range *fd.Legal.Levels {
 			if val == rx {
-				return
+				return checkVal, VPass
 			}
 		}
 	default:
-		if Compare(outVal, fd.Legal.LowLimit, fd.ChSpec) && Compare(fd.Legal.HighLimit, outVal, fd.ChSpec) {
-			return
+		if compare(checkVal, fd.Legal.LowLimit, fd.ChSpec) && compare(fd.Legal.HighLimit, checkVal, fd.ChSpec) {
+			return checkVal, VPass
 		}
 	}
-	return fd.Missing, false
+	return fd.Missing, VValueFail
 }
 
 // FindType determines the ChType of newVal.  If the target type is already set, this is a noop.
@@ -325,19 +306,25 @@ type FieldDef struct {
 
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
-func (fd *FieldDef) Validator(inValue interface{}) (outValue interface{}, status Status) {
-	status = VPass
-	outValue, ok := fd.ChSpec.Converter(inValue, fd.Missing)
-	if !ok {
-		status = VTypeFail
-		outValue = fd.Missing
-		return
+func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status Status) {
+
+	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
+		statusTotal := VPass
+		it := newIterator(inValue)
+		for it.Next() {
+			ov, stat := fd.Validator(it.Item)
+			it.Append(ov)
+			if stat != VPass {
+				statusTotal = VValueFail
+			}
+		}
+		return it.NewItems, statusTotal
 	}
 
-	if outValue, ok = fd.CheckRange(outValue); !ok {
-		status = VValueFail
+	if outVal, status = fd.ChSpec.Converter(inValue, fd.Missing); status != VPass {
+		return
 	}
-	return
+	return fd.CheckRange(outVal)
 }
 
 // TableDef struct defines a table.
@@ -401,14 +388,14 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 			break
 		}
 		if errx != nil {
-			return Wrapper(ErrInput, fmt.Sprintf("%d", rowCount))
+			return Wrapper(ErrInput, fmt.Sprintf("error reading row %d", rowCount))
 		}
 		for ind := 0; ind < len(data[0]); ind++ {
 			var (
 				fval string
 				ok   bool
 			)
-			if fval, ok = data[0][ind].(string); ok != true {
+			if fval, ok = data[0][ind].(string); !ok {
 				return Wrapper(ErrStr, fmt.Sprintf("%v %v", fval, rowCount))
 			}
 			// aggregate results for each field across the rows
@@ -449,24 +436,30 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 				fd.Missing = "!"
 			}
 		}
-		switch fd.ChSpec.Base {
-		case ChInt:
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int64(0), int64(0)
-		case ChFloat:
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
-		default:
-			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
-		}
+		// TODO: don't need this
+		//		switch fd.ChSpec.Base {
+		//		case ChInt:
+		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int64(0), int64(0)
+		//		case ChFloat:
+		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
+		//		default:
+		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
+		//		}
 	}
-	return
+	// check our work
+	return td.Check()
 }
 
 // Create builds and issues CREATE TABLE ClickHouse statement. The table created is "table"
 func (td *TableDef) Create(conn *Connect, table string) error {
+
+	// drop table if it exists
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", table)
 	if _, err := conn.Exec(qry); err != nil {
 		return err
 	}
+
+	// build CREATE TABLE statement
 	qry = fmt.Sprintf("CREATE TABLE %v (", table)
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
 		fd := td.FieldDefs[ind]
@@ -502,46 +495,56 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 }
 
 // Check verifies that the fields are of the type chutils supports.  Check also converts, if needed, the
-// Legal.HighLimit and Legal.LowLimit interfaces to the correct type
+// Legal.HighLimit and Legal.LowLimit and Missing interfaces to the correct type and checks LowLimit <= HighLimit.
+// It's a good idea to run Check before reading the data.
 func (td *TableDef) Check() error {
 	for _, fd := range td.FieldDefs {
 		switch t := fd.ChSpec.Base; t {
 		case ChFixedString:
 			if fd.ChSpec.Length == 0 {
-				return Wrapper(ErrFields, "FixedString must have a length")
+				return Wrapper(ErrFields, fmt.Sprintf("FixedString must have a length, field: %s", fd.Name))
 			}
-		case ChFloat, ChInt:
+		case ChFloat, ChInt, ChDate:
 			var x interface{}
 			var ok bool
-			if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 {
-				return Wrapper(ErrFields, "Floats and Ints must have length 32 or 64")
+			if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 && (t == ChFloat || t == ChInt) {
+				return Wrapper(ErrFields,
+					fmt.Sprintf("Floats and Ints must have length 32 or 64, field %s", fd.Name))
 			}
 			if fd.Legal.HighLimit == nil && fd.Legal.LowLimit == nil {
 				continue
 			}
-			if x, ok = Convert(fd.Legal.HighLimit, fd.ChSpec); !ok {
-				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce HighLimit %v to %v", fd.Legal.HighLimit, t))
+			if x, ok = convert(fd.Legal.HighLimit, fd.ChSpec); !ok {
+				return Wrapper(ErrFields,
+					fmt.Sprintf("cannot coerce HighLimit %v to %v, field: %s", fd.Legal.HighLimit, t, fd.Name))
 			}
 			fd.Legal.HighLimit = x
-			if x, ok = Convert(fd.Legal.LowLimit, fd.ChSpec); !ok {
-				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce LowLimit %v to %v", fd.Legal.LowLimit, t))
+			if x, ok = convert(fd.Legal.LowLimit, fd.ChSpec); !ok {
+				return Wrapper(ErrFields,
+					fmt.Sprintf("cannot coerce LowLimit %v to %v, field: %s", fd.Legal.LowLimit, t, fd.Name))
 			}
 			fd.Legal.LowLimit = x
 			if fd.Missing == nil {
-				return Wrapper(ErrFields, "cannot have populated LowLimit/HighLimit and nil Missing")
+				return Wrapper(ErrFields,
+					fmt.Sprintf("cannot have populated LowLimit/HighLimit and nil Missing, field: %s", fd.Name))
 			}
-			if !Compare(fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec) {
-				return Wrapper(ErrFields, fmt.Sprintf("LowLimit %v >= HighLimit %v", fd.Legal.LowLimit, fd.Legal.HighLimit))
+			if !compare(fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec) {
+				return Wrapper(ErrFields,
+					fmt.Sprintf("LowLimit %v >= HighLimit %v, field: %s", fd.Legal.LowLimit, fd.Legal.HighLimit, fd.Name))
 			}
-			if x, ok = Convert(fd.Missing, fd.ChSpec); !ok {
-				return Wrapper(ErrFields, fmt.Sprintf("cannot coerce Missing value %v to %v", fd.Missing, t))
+			if x, ok = convert(fd.Missing, fd.ChSpec); !ok {
+				return Wrapper(ErrFields,
+					fmt.Sprintf("cannot coerce Missing value %v to %v, field: %s", fd.Missing, t, fd.Name))
 			}
 			fd.Missing = x
+		case ChUnknown:
+			return Wrapper(ErrFields, fmt.Sprintf("invalid ClickHouse type (ChUnknown), field: %s", fd.Name))
 		}
 	}
 	return nil
 }
 
+// writeElement writes a single field with separator char
 func writeElement(el interface{}, char string) []byte {
 	switch v := el.(type) {
 	case string:
@@ -555,9 +558,10 @@ func writeElement(el interface{}, char string) []byte {
 	}
 }
 
+// writeArray writes a ClickHouse Array type. The format is "array(a1,a2,...)"
 func writeArray(el interface{}, char string) (line []byte) {
 	line = []byte("array(")
-	it := NewIterator(el)
+	it := newIterator(el)
 	for it.Next() {
 		line = append(line, writeElement(it.Item, ",")...)
 	}
@@ -582,6 +586,7 @@ func Export(rdr Input, wrtr Output) error {
 			}
 			fmt.Println("done writing", time.Now())
 		}
+		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
 		line := make([]byte, 0)
 		for c := 0; c < len(data[0]); c++ {
 			char := string(wrtr.Separator())
@@ -597,6 +602,7 @@ func Export(rdr Input, wrtr Output) error {
 				line = append(line, writeElement(data[0][c], char)...)
 			}
 		}
+		// Now put the line to wrtr
 		if _, err = wrtr.Write(line); err != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 		}
@@ -613,9 +619,8 @@ func Load(rdr Input, wrtr Output) (err error) {
 	return
 }
 
-// Concur loads a ClickHouse table from an array of Inputs/Outputs concurrently.
-func Concur(nWorker int, rdrs []Input, wrtrs []Output,
-	f func(rdr Input, wrtr Output) error) error {
+// Concur executes function f concurrently on a slice of Inputs/Outputs.
+func Concur(nWorker int, rdrs []Input, wrtrs []Output, f func(rdr Input, wrtr Output) error) error {
 	start := time.Now()
 	if nWorker == 0 {
 		nWorker = runtime.NumCPU()
@@ -634,7 +639,6 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output,
 		ind := ind // Required since the function below is a closure
 		go func() {
 			c <- f(rdrs[ind], wrtrs[ind])
-			return
 		}()
 		running++
 		if running == nWorker {
@@ -658,7 +662,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output,
 			return err
 		}
 	}
-	elapsed := time.Now().Sub(start)
+	elapsed := time.Since(start)
 	fmt.Println("Elapsed time", elapsed.Seconds(), "seconds")
 	return nil
 }

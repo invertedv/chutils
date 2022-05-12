@@ -1,4 +1,3 @@
-// Package chutils
 package chutils
 
 import (
@@ -10,7 +9,7 @@ import (
 
 // Convert converts the type of inValue to the type specified by fd.
 // returns the converted value and a boolean == true if successful
-func Convert(inValue interface{}, fd ChField) (interface{}, bool) {
+func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 	switch fd.Base {
 	case ChFloat:
 		switch fd.Length {
@@ -135,7 +134,7 @@ func strstr(x any) (string, bool)   { return x.(string), true }
 func int32str(x any) (string, bool) { _ = x; return fmt.Sprintf("%v", x.(int32)), true }
 func int64str(x any) (string, bool) { return fmt.Sprintf("%v", x.(int64)), true }
 func datestr(x any) (string, bool) {
-	return fmt.Sprintf("%s", x.(time.Time).Format("2006-01-02")), true
+	return x.(time.Time).Format("2006-01-02"), true
 }
 func intstr(x any) (string, bool) { _ = x; return fmt.Sprintf("%v", x.(int)), true }
 
@@ -160,20 +159,20 @@ func intdate(x any, dfmt string) (time.Time, bool) {
 	return f, err == nil
 }
 
-// Iterator iterates through an interface that contains a slice
-type Iterator struct {
-	Item     interface{}
-	NewItems interface{}
-	data     interface{}
-	ind      int
+// Iterator iterates through an interface that contains a slice,
+type iterator struct {
+	Item     interface{} // Item holds the current item in the slice
+	NewItems interface{} // NewItems is an optional interface holding a slice of the same type
+	data     interface{} // data is the interface iterated through
+	ind      int         // ind is the index of the current element
 }
 
-func NewIterator(data interface{}) *Iterator {
-	return &Iterator{data: data}
+func newIterator(data interface{}) *iterator {
+	return &iterator{data: data}
 }
 
 // Append appends an item to a new slice that has the same underlying type as the data
-func (i *Iterator) Append(v interface{}) {
+func (i *iterator) Append(v interface{}) {
 	switch i.data.(type) {
 	case []float32:
 		if i.NewItems == nil {
@@ -214,8 +213,8 @@ func (i *Iterator) Append(v interface{}) {
 	}
 }
 
-// Next sets Iterator.item to the next element of the array as an interface{}. Returns false if there are no more elements.
-func (i *Iterator) Next() bool {
+// Next populates Iterator.item to the next element of the array as an interface{}. Returns false if there are no more elements.
+func (i *iterator) Next() bool {
 	i.Item = nil
 	switch i.data.(type) {
 	case []float32:
@@ -260,7 +259,7 @@ func (i *Iterator) Next() bool {
 
 // Compare compares the values of two fields that are stored as interface{}
 // returns true if left >= right
-func Compare(left interface{}, right interface{}, ch ChField) bool {
+func compare(left interface{}, right interface{}, ch ChField) bool {
 	if left == nil || right == nil {
 		return true
 	}

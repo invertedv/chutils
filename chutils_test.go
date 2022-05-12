@@ -136,9 +136,9 @@ func TestFieldDef_Validator(t *testing.T) {
 		case ChDate:
 			fd.ChSpec.DateFormat = "2006/01/02"
 			dt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-			fd.Legal.LowLimit = &dt
+			fd.Legal.LowLimit = dt
 			dt1 := time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)
-			fd.Legal.HighLimit = &dt1
+			fd.Legal.HighLimit = dt1
 		}
 		for c := 0; c < len(inputs[r]); c++ {
 			_, status := fd.Validator(inputs[r][c])

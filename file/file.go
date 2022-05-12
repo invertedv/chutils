@@ -19,8 +19,6 @@ import (
 	"time"
 )
 
-// TODO: think about changing to TableDef from TableSpec
-
 // Reader implements chutils.Input interface.
 type Reader struct {
 	Skip      int               // Skip is the # of rows to skip in the file
@@ -93,7 +91,9 @@ func (rdr *Reader) Close() error {
 
 // Reset sets the file pointer to the start of the file
 func (rdr *Reader) Reset() error {
-	_, _ = rdr.rws.Seek(0, 0)
+	if _, e := rdr.rws.Seek(0, 0); e != nil {
+		return e
+	}
 	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize)
 	rdr.RowsRead = 0
 	return nil
@@ -101,7 +101,9 @@ func (rdr *Reader) Reset() error {
 
 // Seek points the reader to lineNo line in the source data.
 func (rdr *Reader) Seek(lineNo int) error {
-	_, _ = rdr.rws.Seek(0, 0)
+	if _, e := rdr.rws.Seek(0, 0); e != nil {
+		return e
+	}
 	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
 	rdr.RowsRead = 0
 	for ind := 0; ind < lineNo-1+rdr.Skip; ind++ {
@@ -115,12 +117,13 @@ func (rdr *Reader) Seek(lineNo int) error {
 
 // CountLines returns the number of rows in the source data.  This does not include any header rows.
 func (rdr *Reader) CountLines() (numLines int, err error) {
-	_, _ = rdr.rws.Seek(0, 0)
-	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
+	if _, err = rdr.rws.Seek(0, 0); err != nil {
+		return
+	}
+	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize)
 	defer func() { err = rdr.Reset() }()
 
 	numLines = 0
-	err = nil
 	for e := error(nil); e != io.EOF; {
 		if _, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
 			if e != io.EOF {
@@ -134,7 +137,7 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	return
 }
 
-// Init initialize FieldDefs slice of TableDef from header row of input
+// Init initialize FieldDefs slice Reader.TableSpec() from header row of input
 func (rdr *Reader) Init() error {
 	if rdr.RowsRead != 0 {
 		if e := rdr.Reset(); e != nil {
@@ -157,7 +160,7 @@ func (rdr *Reader) Init() error {
 			ChSpec: chutils.ChField{
 				Base: chutils.ChUnknown},
 			Description: "",
-			Legal:       &chutils.LegalValues{},
+			Legal:       chutils.NewLegalValues(),
 		}
 		fds[ind] = fd
 	}
@@ -165,7 +168,7 @@ func (rdr *Reader) Init() error {
 	return nil
 }
 
-// GetLine returns the next line from Reader and parses it into fields.
+// GetLine returns the next line from Reader as a slice of strings
 func (rdr *Reader) getLine() (line []string, err error) {
 	err = nil
 	if rdr.Width == 0 {
@@ -192,7 +195,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 		}
 		// The file is quoted, so scan and don't count any Separator that occurs between the quotes.
 		haveQuote := false
-		f := make([]int32, len(l))
+		f := make([]int32, len(l)) // temp slice where we put characters until we see a separator or EOL
 		ind := 0
 		for _, ch := range l {
 			switch ch {
@@ -226,7 +229,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 	}
 	lstr := string(l)
 	if len(lstr) != rdr.Width {
-		return nil, chutils.Wrapper(chutils.ErrFields, "line is wrong width")
+		return nil, chutils.Wrapper(chutils.ErrFields, fmt.Sprintf("line is wrong width: %s", l))
 	}
 	line = make([]string, len(rdr.TableSpec().FieldDefs))
 	start := 0
@@ -250,6 +253,10 @@ func (rdr *Reader) getLine() (line []string, err error) {
 //   - The return slice valid is nil
 //   - The fields are returned as strings.
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
+
+	if rdr.TableSpec().FieldDefs == nil {
+		return nil, nil, chutils.Wrapper(chutils.ErrFields, "must define TableSpec")
+	}
 	var csvrow []string
 	valid = nil
 
@@ -306,10 +313,13 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 // amongst the Readers in the slice.
 func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 
-	r = nil //make([]*Reader, 0)
+	r = nil
 	nObs, err := rdr0.CountLines()
 	if err != nil {
 		return
+	}
+	if nRdrs < 1 {
+		return nil, chutils.Wrapper(chutils.ErrInput, "must have >= 1 reader")
 	}
 	nper := nObs / nRdrs
 	start := 1
@@ -355,8 +365,7 @@ func (wtr *Writer) Insert() error {
 	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, wtr.Table, "CSV", wtr.Name())
 	// running clickhouse-client as a command bc issuing the command itself chokes on --query element
 	c := exec.Command("bash", "-c", cmd)
-	err := c.Run()
-	return err
+	return c.Run()
 }
 
 // Name returns the name of the file Writer points to.

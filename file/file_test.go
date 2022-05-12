@@ -42,10 +42,12 @@ func TestReader_Seek(t *testing.T) {
 		}
 
 		l, _, e := rt1.Read(1, false)
+		if e != nil {
+			t.Errorf("unexpected read error")
+		}
 		if l[0][0] != result[j] {
 			t.Errorf("Results don't match on case %d. Expect %s but got %s", j, result[j], l[0][0])
 		}
-
 	}
 }
 
@@ -200,10 +202,10 @@ func TestReader_Read(t *testing.T) {
 		}
 		if base[j] == chutils.ChDate {
 			if dx, ok := maxes[j].(time.Time); ok {
-				fd.Legal.HighLimit = &dx
+				fd.Legal.HighLimit = dx
 			}
 			if dx, ok := mins[j].(time.Time); ok {
-				fd.Legal.LowLimit = &dx
+				fd.Legal.LowLimit = dx
 			}
 		}
 	}
@@ -250,7 +252,7 @@ func (w *wstr) Write(b []byte) (n int, err error) {
 }
 
 func (w *wstr) String() string {
-	return string(w.buf)
+	return w.buf
 }
 
 func TestWriter_Export(t *testing.T) {

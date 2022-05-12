@@ -19,8 +19,8 @@ import (
 func TestReader_Init(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
-	var err error = nil
-	con := &chutils.Connect{"", "", "", "", db}
+	var err error
+	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -31,7 +31,7 @@ func TestReader_Init(t *testing.T) {
 	resBases := []chutils.ChType{chutils.ChString, chutils.ChFloat, chutils.ChFixedString, chutils.ChInt, chutils.ChDate}
 
 	// for sqlmock
-	coltype := []string{"String", "Float64", "FixedString(1)", "Int16", "Date"}
+	coltype := []string{"String", "Float64", "FixedString(1)", "Int32", "Date"}
 	examples := []interface{}{"hello", 1.0, "X", 1, "2022-01-02"}
 	// data
 	dv := []driver.Value{"a", 1.0, "X", 1, "2022-01-02"}
@@ -49,7 +49,7 @@ func TestReader_Init(t *testing.T) {
 
 	rdr := NewReader("SELECT * FROM bbb", con)
 	if err := rdr.Init(); err != nil {
-		t.Errorf("incorrect query")
+		t.Errorf("unexpected fail in Init")
 	}
 	actNames := make([]string, 0)
 	actBases := make([]chutils.ChType, 0)
@@ -67,8 +67,9 @@ func TestReader_Read(t *testing.T) {
 	dtMiss := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
-	var err error = nil
-	con := &chutils.Connect{"", "", "", "", db}
+	var err error
+	//	con := &chutils.Connect{"", "", "", "", db}
+	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -112,9 +113,17 @@ func TestReader_Read(t *testing.T) {
 		t.Errorf("incorrect query")
 	}
 	// put in some bounds and missing values for these fields
-	_, fd, err := rdr.TableSpec().Get("edate")
+
+	var fd *chutils.FieldDef
+	_, fd, err = rdr.TableSpec().Get("edate")
+	if err != nil {
+		t.Errorf("unexpected Get error")
+	}
 	fd.Missing = dtMiss
 	_, fd, err = rdr.TableSpec().Get("bflt")
+	if err != nil {
+		t.Errorf("unexpected Get error")
+	}
 	fd.Missing = -1.0
 	fd.Legal.HighLimit = 1.5
 	fd.Legal.LowLimit = 0.0
@@ -145,8 +154,9 @@ func TestReader_Read(t *testing.T) {
 func TestReader_Seek(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
-	var err error = nil
-	con := &chutils.Connect{"", "", "", "", db}
+	var err error
+	//	con := &chutils.Connect{"", "", "", "", db}
+	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -209,8 +219,9 @@ func TestReader_Seek(t *testing.T) {
 func TestWriter_Insert(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
-	var err error = nil
-	con := &chutils.Connect{"", "", "", "", db}
+	var err error
+	//	con := &chutils.Connect{"", "", "", "", db}
+	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
