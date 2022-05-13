@@ -246,6 +246,7 @@ func (i *iterator) Next() bool {
 		if i.ind == len(v) {
 			return false
 		}
+		i.Item = v[i.ind]
 	case []string:
 		v := i.data.([]string)
 		if i.ind == len(v) {

@@ -300,8 +300,7 @@ type FieldDef struct {
 	Description string       // Description is an optional description for CREATE TABLE statement.
 	Legal       *LegalValues // Legal are optional bounds/list of legal values.
 	Missing     interface{}  // Missing is the value used for a field if the value is missing/illegal.
-	//	Calculator  func(td *TableDef, r Row) interface{} // Calculator is an optional function to calculate the field when it is missing.
-	Width int // Width of field (for flat files)
+	Width       int          // Width of field (for flat files)
 }
 
 // Validator checks the value of the field (inValue) against its FieldDef.
@@ -332,9 +331,63 @@ type TableDef struct {
 	Key       string            // Key is the key for the table.
 	Engine    EngineType        // EngineType is the ClickHouse table engine.
 	FieldDefs map[int]*FieldDef // Map of fields in the table. The int key is the column order in the table.
+	nested    map[string][2]int // Map of nested fields. String is nested name, [2]int is first & last index into FieldDefs
 }
 
-// Get returns the FieldDef for field "name".  The FieldDefs map is by column order, so access
+// Nest defines a set of fields in [field1, field2] as being nested with name nestName
+func (td *TableDef) Nest(nestName string, field1 string, field2 string) error {
+	_, ok := td.nested[nestName]
+	if ok {
+		return Wrapper(ErrFields, fmt.Sprintf("nested name %s already exists", nestName))
+	}
+	ind1, fd, err := td.Get(field1)
+	if err != nil {
+		return err
+	}
+	if fd.ChSpec.OuterFunc != "Array" {
+		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
+	}
+	ind2, fd, err := td.Get(field2)
+	if fd.ChSpec.OuterFunc != "Array" {
+		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
+	}
+	if err != nil {
+		return err
+	}
+	if ind2 < ind1 {
+		tmp := ind1
+		ind1 = ind2
+		ind2 = tmp
+	}
+	if td.nested != nil {
+		for k, v := range td.nested {
+			if v[1] >= ind1 && v[0] <= ind2 {
+				return Wrapper(ErrFields, fmt.Sprintf("nest %s would overlap nest %s", nestName, k))
+			}
+		}
+	}
+	if td.nested == nil {
+		td.nested = make(map[string][2]int)
+	}
+	td.nested[nestName] = [2]int{ind1, ind2}
+	return nil
+}
+
+// isNested checks whether the the field indexed by ind in td.FieldDefs is the start or end of a nest.\
+// returns the start or end string for nesting if it is.
+func (td *TableDef) isNest(ind int) (start string, end string) {
+	for k, v := range td.nested {
+		if ind == v[0] {
+			return fmt.Sprintf("%s Nested(\n", k), ""
+		}
+		if ind == v[1] {
+			return "", ")"
+		}
+	}
+	return "", ""
+}
+
+// Get returns the FieldDef for field "name". The FieldDefs map is by column order, so access
 // by field name is needed.
 func (td *TableDef) Get(name string) (int, *FieldDef, error) {
 	for ind, fdx := range td.FieldDefs {
@@ -461,7 +514,10 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 
 	// build CREATE TABLE statement
 	qry = fmt.Sprintf("CREATE TABLE %v (", table)
+	isNested := false
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
+		nestStart, nestEnd := td.isNest(ind)
+		isNested = isNested || (nestStart != "")
 		fd := td.FieldDefs[ind]
 		// start by creating the ClickHouse type
 		ftype := fmt.Sprintf("%v", fd.ChSpec.Base)
@@ -472,10 +528,12 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 			ftype = fmt.Sprintf("%s(%d)", ftype, fd.ChSpec.Length)
 		}
 		if fd.ChSpec.OuterFunc != "" {
-			ftype = fmt.Sprintf("%s(%s)", fd.ChSpec.OuterFunc, ftype)
+			if !isNested {
+				ftype = fmt.Sprintf("%s(%s)", fd.ChSpec.OuterFunc, ftype)
+			}
 		}
-		// Prepend field name.
-		ftype = fmt.Sprintf("%s     %s", fd.Name, ftype)
+		// Prepend field name and nest.
+		ftype = fmt.Sprintf("%s %s     %s", nestStart, fd.Name, ftype)
 		// add comment
 		if fd.Description != "" {
 			ftype = fmt.Sprintf("%s     comment '%s'", ftype, fd.Description)
@@ -485,7 +543,8 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 		if ind == len(td.FieldDefs)-1 {
 			char = ")"
 		}
-		ftype = fmt.Sprintf("%s%s\n", ftype, char)
+		ftype = fmt.Sprintf("%s%s%s\n", ftype, nestEnd, char)
+		isNested = isNested && !(nestEnd == ")")
 		// Add to create query.
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
