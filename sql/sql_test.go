@@ -109,7 +109,7 @@ func TestReader_Read(t *testing.T) {
 	mock.ExpectQuery(`^SELECT \* FROM \(SELECT \* FROM bbb\) LIMIT 1`).WillReturnRows(rows)
 
 	rdr := NewReader("SELECT * FROM bbb", con)
-	if err := rdr.Init("a", chutils.MergeTree); err != nil {
+	if err := rdr.Init("astr", chutils.MergeTree); err != nil {
 		t.Errorf("incorrect query")
 	}
 	// put in some bounds and missing values for these fields

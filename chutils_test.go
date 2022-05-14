@@ -61,7 +61,7 @@ func (m *mockRead) Close() error {
 
 func buildTableDef() TableDef {
 	td := TableDef{
-		Key:       "a",
+		Key:       "xstr",
 		Engine:    MergeTree,
 		FieldDefs: nil,
 	}
