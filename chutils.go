@@ -220,6 +220,7 @@ func NewChField(base ChType, length int, outerFunc string, Format string) (*ChFi
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
+// If the conversion is unsuccessful, the return value is "missing"
 func (t ChField) Converter(inValue interface{}, missing interface{}) (interface{}, Status) {
 
 	outValue, ok := convert(inValue, t)
@@ -287,7 +288,7 @@ func FindType(newVal string, target *ChField) (res ChType) {
 			res = ChInt
 		}
 		// date?
-		if dfmt, _, err := FindFormat(newVal); err == nil {
+		if dfmt, _, err := findFormat(newVal); err == nil {
 			target.Format = dfmt
 			res = ChDate
 		}
@@ -339,7 +340,7 @@ func NewFieldDef(name string, chSpec ChField, description string, legal *LegalVa
 }
 
 // Validator checks the value of the field (inValue) against its FieldDef.
-// outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
+// outValue is the inValue that has the correct type. It is set to its fd.Missing if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status Status) {
 
 	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
@@ -447,8 +448,8 @@ func (td *TableDef) Get(name string) (int, *FieldDef, error) {
 	return 0, nil, Wrapper(ErrFields, name)
 }
 
-// FindFormat determines the date format for a date represented as a string.
-func FindFormat(inDate string) (format string, date time.Time, err error) {
+// findFormat determines the date format for a date represented as a string.
+func findFormat(inDate string) (format string, date time.Time, err error) {
 	format = ""
 	for _, format = range DateFormats {
 		date, err = time.Parse(format, inDate)

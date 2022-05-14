@@ -8,7 +8,7 @@ import (
 )
 
 // Convert converts the type of inValue to the type specified by fd.
-// returns the converted value and a boolean == true if successful
+// returns the converted value and a boolean == true if successful.
 func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 	switch fd.Base {
 	case ChFloat:
