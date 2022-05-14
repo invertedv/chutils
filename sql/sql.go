@@ -9,8 +9,8 @@
 //     sql Writer writing values from a reader.  Although the source can be a sql.Reader, more commonly one would
 //     expect it to be a file.Reader.
 //
-//   - clickhouse-client insert.  Use a file Writer.Insert to issue a shell command using clickhouse-client.
-//     The file may be created by a file Writer.
+//   - clickhouse-client insert.  Use a file Writer.Insert to create a CSV file and then issue a shell command to run
+//     the clickhouse-client to insert the file.
 //
 // Before any of these approaches are used, the TableDef.CreateTable() can be used to create the destination table.
 package sql
@@ -29,8 +29,8 @@ import (
 type Reader struct {
 	Sql       string            // Sql is the SELECT string.  It does not have an INSERT
 	RowsRead  int               // RowsRead is the number of rows read so far
-	tableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
 	Name      string            // Name is the name of the output table created by Insert()
+	tableSpec *chutils.TableDef // TableDef is the table def for the file.  Can be supplied or derived from the file.
 	conn      *chutils.Connect  // conn is connector to ClickHouse
 	data      *sql.Rows         // data is the output of executing Reader.Sql
 }
@@ -56,7 +56,7 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 }
 
 // Init initializes Reader.TableDef by looking at the output of the query
-func (rdr *Reader) Init() (err error) {
+func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 	var rows *sql.Rows
 	if rdr.Sql == "" {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
@@ -66,21 +66,21 @@ func (rdr *Reader) Init() (err error) {
 		return
 	}
 	defer func() {
-		err = rows.Close()
+		_ = rows.Close()
 	}()
 	ct, err := rows.ColumnTypes()
 	if err != nil {
-		return nil
+		return
 	}
 
 	// work through column types to build slice of FieldDefs
 	fds := make(map[int]*chutils.FieldDef)
 	for ind, c := range ct {
 		chf := chutils.ChField{
-			Base:       0,
-			Length:     0,
-			OuterFunc:  "",
-			DateFormat: "",
+			Base:      0,
+			Length:    0,
+			OuterFunc: "",
+			Format:    "",
 		}
 		// parse DataBaseTypeName
 		tn := c.DatabaseTypeName()
@@ -109,7 +109,7 @@ func (rdr *Reader) Init() (err error) {
 		switch chf.Base {
 		case chutils.ChDate:
 			// ClickHouse connector brings in dates with this format
-			chf.DateFormat = time.RFC3339
+			chf.Format = time.RFC3339
 		case chutils.ChInt, chutils.ChFloat:
 			var l int64
 			if l, err = strconv.ParseInt(trailing, 10, 32); err != nil {
@@ -139,7 +139,8 @@ func (rdr *Reader) Init() (err error) {
 		}
 		fds[ind] = fd
 	}
-	rdr.tableSpec.FieldDefs = fds
+	//	rdr.tableSpec.FieldDefs = fds
+	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 
 	return rdr.TableSpec().Check()
 }
@@ -173,6 +174,7 @@ func typer(inType string) (ii interface{}) {
 // If validation == false:
 //   - data is returned with the fields appropriately typed.
 //   - The return slice valid is nil
+// err is io.EOF at the end of the record set
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
 	valid = nil
@@ -199,10 +201,6 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 
 	for rowCount := 0; rowCount < nTarget; rowCount++ {
 		if !rdr.data.Next() {
-			// TODO: delete this?
-			if e := rdr.Reset(); e != nil {
-				return nil, nil, e
-			}
 			return data, valid, io.EOF
 		}
 		rdr.RowsRead++

@@ -1,6 +1,18 @@
 // Package chutils is a set of utilities designed to work with ClickHouse.
 // The utilities are designed to facilitate import and export of data.
 //
+//The chutils package facilitates these types of functions. The principal use cases are:
+//
+//  1. file --> ClickHouse
+//  2. ClickHouse --> file
+//  3. ClickHouse --> ClickHouse
+//
+//Why is use case 3 helpful?
+//  - Automatic generation of the CREATE TABLE statement
+//  - Data cleaning
+//  - Renaming fields
+//  - Adding fields that may be complex functions of the Input and/or use data from other Go variables.
+//
 //The chutils package defines:
 //   - An Input interface that reads data.
 //   - A TableDef struct that specifies the structure of the input. Features include:
@@ -15,40 +27,39 @@
 //
 // These two packages can be mixed and matched for Input/Output.
 //
-// The general use pattern is
-//   1. Read from Input
-//   2. <Validate data>
-//   3. Write to output
-//
 // Example uses
 //
 // 1. Load a CSV to ClickHouse -- Option 1 (see Example in package file)
 //    a. Define a file Reader to point to the CSV.
 //    b. Use Init to create the TableDef and then Impute to determine the fields and types.
 //    c. Use the Create method of TableDef to create the ClickHouse table to populate.
-//    d. Define a file Writer that points a temporary file.
-//    e. Use chutils Export to create a temporary file that uses the Reader/Writer.
-//    f. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
+//    d. Run TableSpecs().Check() to verify the TableSpec is set up correctly.
+//    e. Define a file Writer that points a temporary file.
+//    f. Use chutils Export to create a temporary file that uses the Reader/Writer.
+//    g. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
 //
 // 2. Load a CSV to ClickHouse -- Option 2 (see Example in package sql).
 //    a. same as a, above.
 //    b. same as b, above.
 //    c. same as c, above.
-//    d. Define an SQL Writer that points to the table to populate.
-//    e. Use chutils Export to create a VALUES insert statement.
-//    f. Use the Writer Insert statement to execute the Insert.
+//    d. same as d, above.
+//    e. Define an SQL Writer that points to the table to populate.
+//    f. Use chutils Export to create a VALUES insert statement.
+//    g. Use the Writer Insert statement to execute the Insert.
 //
 // 3. Insert to a ClickHouse table from a ClickHouse query -- Option 1.
 //    a. Define an sql Reader to define the source query.
 //    b. Use Init to define the TableDef and Create to create the output table.
-//    c. Use Insert to execute the insert query. (Note, there is no data validation).
+//    c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
+//    d. Use Insert to execute the insert query. (Note, there is no data validation).
 //
 // 4. Insert to a ClickHouse table from a ClickHouse query -- Option 2.
 //    a. Same as a, above.
 //    b. Same as b, above.
-//    c. Define an sql Writer that points to the table to populate.
-//    d. Use chutils Export to create the VALUEs statement that is used to insert into the table.
-//    e. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
+//    c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
+//    d. Define an sql Writer that points to the table to populate.
+//    e. Use chutils Export to create the VALUEs statement that is used to insert into the table.
+//    f. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
 package chutils
 
 import (
@@ -63,15 +74,17 @@ import (
 )
 
 // TODO: version numbers
+// TODO: use format on write for floats
 
 // Missing values used when the user does not supply them
 var (
-	DateMissing  = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
-	IntMissing   = -1   //math.MaxInt32
-	FloatMissing = -1.0 //math.MaxFloat64
+	DateMissing   = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
+	IntMissing    = -1   //math.MaxInt32
+	FloatMissing  = -1.0 //math.MaxFloat64
+	StringMissing = "!"
 )
 
-// DateFormats are formats to try when guessing the format in Impute()
+// DateFormats are formats to try when guessing the field type in Impute()
 var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
 	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", time.RFC3339}
 
@@ -111,8 +124,7 @@ func NewConnect(http string, host string, user string, password string) (con *Co
 	if con.DB, err = sql.Open("clickhouse", con.String()); err != nil {
 		return
 	}
-	err = con.DB.Ping()
-	return
+	return con, con.DB.Ping()
 }
 
 // ClickHouse connect string
@@ -188,10 +200,22 @@ func (t ChType) String() string {
 
 // ChField struct holds the specification for a ClickHouse field
 type ChField struct {
-	Base       ChType // Base is base type of ClickHouse field.
-	Length     int    // Length is length of field (0 for String).
-	OuterFunc  string // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
-	DateFormat string // Format for incoming dates from Input
+	Base      ChType // Base is base type of ClickHouse field.
+	Length    int    // Length is length of field (0 for String).
+	OuterFunc string // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
+	Format    string // Format for incoming dates from Input, or outgoing Floats
+}
+
+func NewChField(base ChType, length int, outerFunc string, Format string) (*ChField, error) {
+	if (base == ChInt || base == ChFloat) && !(length == 32 || length == 64) {
+		return nil, Wrapper(ErrFields, "length of int and float must be either 32 or 64")
+	}
+	return &ChField{
+		Base:      base,
+		Length:    length,
+		OuterFunc: outerFunc,
+		Format:    Format,
+	}, nil
 }
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
@@ -207,11 +231,9 @@ func (t ChField) Converter(inValue interface{}, missing interface{}) (interface{
 
 // LegalValues holds bounds and lists of legal values for a ClickHouse field
 type LegalValues struct {
-	LowLimit  interface{} // Minimum legal value for types Int, Float
-	HighLimit interface{} // Maximum legal value for types Int, Float
-	//	FirstDate *time.Time      // Earliest legal date for Date
-	//	LastDate  *time.Time      // Last legal date for type Date
-	Levels *map[string]int // Legal values for types String, FixedString
+	LowLimit  interface{}     // Minimum legal value for types Int, Float
+	HighLimit interface{}     // Maximum legal value for types Int, Float
+	Levels    *map[string]int // Legal values for types String, FixedString
 }
 
 // NewLegalValues creates a new LegalValues type
@@ -266,7 +288,7 @@ func FindType(newVal string, target *ChField) (res ChType) {
 		}
 		// date?
 		if dfmt, _, err := FindFormat(newVal); err == nil {
-			target.DateFormat = dfmt
+			target.Format = dfmt
 			res = ChDate
 		}
 	}
@@ -303,6 +325,19 @@ type FieldDef struct {
 	Width       int          // Width of field (for flat files)
 }
 
+func NewFieldDef(name string, chSpec ChField, description string, legal *LegalValues, missing interface{}, width int) *FieldDef {
+	fd := &FieldDef{
+		Name:        name,
+		ChSpec:      chSpec,
+		Description: description,
+		Legal:       legal,
+		Missing:     missing,
+		Width:       width,
+	}
+	_ = fd
+	return fd
+}
+
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its Missing value if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status Status) {
@@ -320,9 +355,11 @@ func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status S
 		return it.NewItems, statusTotal
 	}
 
+	// convert to correct type (if needed)
 	if outVal, status = fd.ChSpec.Converter(inValue, fd.Missing); status != VPass {
 		return
 	}
+	// check against ranges/levels
 	return fd.CheckRange(outVal)
 }
 
@@ -332,6 +369,18 @@ type TableDef struct {
 	Engine    EngineType        // EngineType is the ClickHouse table engine.
 	FieldDefs map[int]*FieldDef // Map of fields in the table. The int key is the column order in the table.
 	nested    map[string][2]int // Map of nested fields. String is nested name, [2]int is first & last index into FieldDefs
+}
+
+// NewTableDef creates a new TableDef struc
+func NewTableDef(key string, engine EngineType, fielddefs map[int]*FieldDef) *TableDef {
+	td := &TableDef{
+		Key:       key,
+		Engine:    engine,
+		FieldDefs: fielddefs,
+		nested:    nil,
+	}
+	return td
+
 }
 
 // Nest defines a set of fields in [field1, field2] as being nested with name nestName
@@ -375,7 +424,7 @@ func (td *TableDef) Nest(nestName string, field1 string, field2 string) error {
 
 // isNested checks whether the the field indexed by ind in td.FieldDefs is the start or end of a nest.\
 // returns the start or end string for nesting if it is.
-func (td *TableDef) isNest(ind int) (start string, end string) {
+func (td *TableDef) isNested(ind int) (start string, end string) {
 	for k, v := range td.nested {
 		if ind == v[0] {
 			return fmt.Sprintf("%s Nested(\n", k), ""
@@ -417,7 +466,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 	if err = rdr.Reset(); err != nil {
 		return
 	}
-	defer func() { err = rdr.Reset() }()
+	defer func() { _ = rdr.Reset() }()
 	// countType keeps track of the field values as the file is read
 	type countType struct {
 		floats int
@@ -486,18 +535,9 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 				td.FieldDefs[ind].Missing = FloatMissing
 			default:
 				fd.ChSpec.Base = ChString
-				fd.Missing = "!"
+				fd.Missing = StringMissing
 			}
 		}
-		// TODO: don't need this
-		//		switch fd.ChSpec.Base {
-		//		case ChInt:
-		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, int64(0), int64(0)
-		//		case ChFloat:
-		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, 0.0, 0.0
-		//		default:
-		//			fd.Legal.Levels, fd.Legal.LowLimit, fd.Legal.HighLimit = nil, nil, nil // counts[ind].legal.Levels, nil, nil
-		//		}
 	}
 	// check our work
 	return td.Check()
@@ -511,12 +551,15 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	if _, err := conn.Exec(qry); err != nil {
 		return err
 	}
+	if td.Key == "" {
+		return Wrapper(ErrFields, "TableSpecs().Key is empty")
+	}
 
 	// build CREATE TABLE statement
 	qry = fmt.Sprintf("CREATE TABLE %v (", table)
 	isNested := false
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
-		nestStart, nestEnd := td.isNest(ind)
+		nestStart, nestEnd := td.isNested(ind)
 		isNested = isNested || (nestStart != "")
 		fd := td.FieldDefs[ind]
 		// start by creating the ClickHouse type
@@ -557,7 +600,27 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 // Legal.HighLimit and Legal.LowLimit and Missing interfaces to the correct type and checks LowLimit <= HighLimit.
 // It's a good idea to run Check before reading the data.
 func (td *TableDef) Check() error {
+	var outerfs = [3]string{"Array", "LowCardinality", "Nullable"}
+
+	// see if key is in the table
+	if _, _, e := td.Get(td.Key); e != nil {
+		return Wrapper(ErrFields, fmt.Sprintf("key %s is not in the table", td.Key))
+	}
+	// work through the fields, validate types, ranges/levels and Missing values.
 	for _, fd := range td.FieldDefs {
+		// Check OuterFunc is legit
+		if fd.ChSpec.OuterFunc != "" {
+			ok := false
+			for _, fn := range outerfs {
+				if fd.ChSpec.OuterFunc == fn {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return Wrapper(ErrFields, fmt.Sprintf("unsupported outer function: %s", fd.ChSpec.OuterFunc))
+			}
+		}
 		switch t := fd.ChSpec.Base; t {
 		case ChFixedString:
 			if fd.ChSpec.Length == 0 {

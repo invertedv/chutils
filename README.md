@@ -10,9 +10,10 @@ There may be times when that's not what you want.  Then you're on your own gener
 
 The chutils package facilitates these types of functions. The principal use cases are:
 
-- Importing text files to ClickHouse
-- Exporting from ClickHouse to text files
-- Running queries that create new tables
+1. file --> ClickHouse
+2. ClickHouse --> file
+3. ClickHouse --> ClickHouse
+
 
 Features include:
 
@@ -36,4 +37,8 @@ Features include:
     - from VALUES statements built with sql.Writer
     - from SQL directly using sql.Reader
 
-
+Why is use case 3 helpful?
+- Automatic generation of the CREATE TABLE statement
+- Data cleaning
+- Renaming fields
+- Adding fields that may be complex functions of the Input and/or use data from other Go variables.

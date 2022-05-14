@@ -134,7 +134,7 @@ func TestFieldDef_Validator(t *testing.T) {
 			levels["def"] = 1
 			fd.Legal.Levels = &levels
 		case ChDate:
-			fd.ChSpec.DateFormat = "2006/01/02"
+			fd.ChSpec.Format = "2006/01/02"
 			dt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			fd.Legal.LowLimit = dt
 			dt1 := time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)
@@ -147,5 +147,36 @@ func TestFieldDef_Validator(t *testing.T) {
 				t.Errorf("expected %v got %v", expected[r][c], status)
 			}
 		}
+	}
+}
+
+func TestTableDef_Nest(t *testing.T) {
+	ch, err := NewChField(ChString, 0, "Array", "")
+	if err != nil {
+		t.Errorf("unexpected error in new ChField")
+	}
+	fds := make(map[int]*FieldDef)
+	fd1 := NewFieldDef("f1", *ch, "", NewLegalValues(), nil, 0)
+	fd2 := NewFieldDef("f2", *ch, "", NewLegalValues(), nil, 0)
+	fd3 := NewFieldDef("f3", *ch, "", NewLegalValues(), nil, 0)
+	fd4 := NewFieldDef("f4", *ch, "", NewLegalValues(), nil, 0)
+	fds[0], fds[1], fds[2], fds[3] = fd1, fd2, fd3, fd4
+	td := TableDef{
+		Key:       "f1",
+		Engine:    MergeTree,
+		FieldDefs: fds,
+		nested:    nil,
+	}
+	if td.Nest("test", "f1", "f2") != nil {
+		t.Errorf("error in test 1")
+	}
+	if td.Nest("test", "f1", "f2") == nil {
+		t.Errorf("error in test 2")
+	}
+	if td.Nest("test1", "f2", "f3") == nil {
+		t.Errorf("error in test3")
+	}
+	if td.Nest("test1", "f3", "f4") != nil {
+		t.Errorf("error in test4")
 	}
 }

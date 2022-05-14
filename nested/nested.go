@@ -62,12 +62,18 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 
 	data = nil
 	valid = nil
-	err = nil
 	data, valid, errRead := rdr.r.Read(nTarget, validate)
-	var outValue interface{}
-	if err != nil && errRead != io.EOF {
+	// no data, return EOF
+	if len(data) == 0 {
+		return nil, nil, io.EOF
+	}
+	// non EOF error
+	if errRead != nil && errRead != io.EOF {
 		return nil, nil, err
 	}
+	// have data but may also be EOF
+	var outValue interface{}
+
 	// number of fields coming in from r
 	nExist := len(data[0])
 	for row := 0; row < len(data); row++ {
@@ -90,9 +96,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 			valid[row] = append(valid[row], status)
 		}
 	}
-	// Preserve io.EOF if we got it
-	err = errRead
-	return
+	return data, valid, errRead
 }
 
 // CountLines returns the number of lines in the underlying reader, Reader.r

@@ -46,7 +46,7 @@ func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 
 		funcs := []func(x any, dfmt string) (time.Time, bool){f64date, f32date, strdate, int32date, int64date, datedate, intdate}
 		if ind, ok := kindIndex(inValue); ok {
-			return funcs[ind](inValue, fd.DateFormat)
+			return funcs[ind](inValue, fd.Format)
 		}
 	}
 	return nil, false

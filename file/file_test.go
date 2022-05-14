@@ -25,7 +25,7 @@ func TestReader_Seek(t *testing.T) {
 
 	rt := &rstr{*strings.NewReader(input[0])}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
-	if e := rt1.Init(); e != nil {
+	if e := rt1.Init("a", chutils.MergeTree); e != nil {
 		t.Errorf("Init failed")
 		return
 	}
@@ -59,7 +59,7 @@ func TestReader_Reset(t *testing.T) {
 
 	rt := &rstr{*strings.NewReader(input[0])}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
-	if e := rt1.Init(); e != nil {
+	if e := rt1.Init("a", chutils.MergeTree); e != nil {
 		t.Errorf("Init failed")
 		return
 	}
@@ -96,7 +96,7 @@ func TestReader_Init(t *testing.T) {
 	for j := 0; j < len(results); j++ {
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
-		if e := rt1.Init(); e != nil {
+		if e := rt1.Init("a", chutils.MergeTree); e != nil {
 			t.Errorf("unexpected error")
 		}
 		if len(rt1.TableSpec().FieldDefs) != len(results[j]) {
@@ -125,7 +125,7 @@ func TestReader_Read(t *testing.T) {
 
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
-		if e := rt1.Init(); e != nil {
+		if e := rt1.Init("a", chutils.MergeTree); e != nil {
 			t.Errorf("unexpected Init error, case %d", j)
 			break
 		}
@@ -180,7 +180,7 @@ func TestReader_Read(t *testing.T) {
 
 	rt := &rstr{*strings.NewReader(inputc)}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
-	if e := rt1.Init(); e != nil {
+	if e := rt1.Init("a", chutils.MergeTree); e != nil {
 		t.Errorf("unexpected Init error, case %d", 0)
 	}
 	for j := 0; j < len(field); j++ {
@@ -191,7 +191,7 @@ func TestReader_Read(t *testing.T) {
 		}
 		fd.ChSpec.Base = base[j]
 		fd.ChSpec.Length = length[j]
-		fd.ChSpec.DateFormat = datefmt[j]
+		fd.ChSpec.Format = datefmt[j]
 		fd.Missing = missing[j]
 		if base[j] == chutils.ChInt || base[j] == chutils.ChFloat {
 			fd.Legal.HighLimit = maxes[j]
@@ -268,7 +268,7 @@ func TestWriter_Export(t *testing.T) {
 
 	rt := &rstr{*strings.NewReader(input[0])}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
-	if e := rt1.Init(); e != nil {
+	if e := rt1.Init("a", chutils.MergeTree); e != nil {
 		t.Errorf("Init failed")
 		return
 	}
@@ -351,10 +351,14 @@ func ExampleReader_Read_cSV() {
 			log.Fatalln(err)
 		}
 	}()
-	if e := rdr.Init(); e != nil {
+	if e := rdr.Init("id", chutils.MergeTree); e != nil {
 		log.Fatalln(err)
 	}
 	if e := rdr.TableSpec().Impute(rdr, 0, .95); e != nil {
+		log.Fatalln(e)
+	}
+	// Check the internal consistency of TableSpec
+	if e := rdr.TableSpec().Check(); e != nil {
 		log.Fatalln(e)
 	}
 

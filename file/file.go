@@ -3,8 +3,6 @@
 //   - Be delimited or fixed-width
 //   - Have header rows or not
 //
-// Possible use strategies:
-//   - Read from a file, (validate, clean), Insert
 package file
 
 import (
@@ -137,8 +135,9 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	return
 }
 
-// Init initialize FieldDefs slice Reader.TableSpec() from header row of input
-func (rdr *Reader) Init() error {
+// Init initialize FieldDefs slice Reader.TableSpec() from header row of input.
+// It does not set any of the field types.
+func (rdr *Reader) Init(key string, engine chutils.EngineType) error {
 	if rdr.RowsRead != 0 {
 		if e := rdr.Reset(); e != nil {
 			return e
@@ -164,7 +163,8 @@ func (rdr *Reader) Init() error {
 		}
 		fds[ind] = fd
 	}
-	rdr.tableSpec.FieldDefs = fds
+	//	rdr.tableSpec.FieldDefs = fds
+	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 	return nil
 }
 
@@ -252,6 +252,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 //   - The data is not validated.
 //   - The return slice valid is nil
 //   - The fields are returned as strings.
+// err returns io.EOF at end of file
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 
 	if rdr.TableSpec().FieldDefs == nil {
@@ -268,11 +269,14 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 		}
 	}
 	numFields := len(rdr.TableSpec().FieldDefs)
-	//	csvr.rdr.FieldsPerRecord = numFields
 
 	data = make([]chutils.Row, 0)
 	for rowCount := 1; ; rowCount++ {
 		if csvrow, err = rdr.getLine(); err == io.EOF {
+			return
+		}
+		if err != nil {
+			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", rdr.RowsRead+1))
 			return
 		}
 		if have, need := len(csvrow), len(rdr.TableSpec().FieldDefs); have != need {
@@ -280,14 +284,11 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 				fmt.Sprintf("at row %d, need %d fields but got %d", rdr.RowsRead+1, need, have))
 			return
 		}
-		if err != nil {
-			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", rdr.RowsRead+1))
-			return
-		}
 		outrow := make(chutils.Row, 0)
 		for j := 0; j < numFields; j++ {
 			outrow = append(outrow, csvrow[j])
 		}
+
 		if validate {
 			vrow := make(chutils.Valid, numFields)
 			for j := 0; j < numFields; j++ {

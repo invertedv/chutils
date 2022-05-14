@@ -40,7 +40,7 @@ func NewVars(td *chutils.TableDef, data chutils.Row, valid chutils.Valid, valida
 }
 
 func TestReader_Read(t *testing.T) {
-	input := []string{"a,b\n\"hello, mom\",3\n,\"1\",2\n",
+	input := []string{"a,b\n\"hello, mom\",3\n\"1\",2\n",
 		"a,b\n1,2\n2,3\n",
 		"a,b\n3,2\n2,3\n",
 		"a,b\n5,2\n6,6\n"}
@@ -50,8 +50,14 @@ func TestReader_Read(t *testing.T) {
 	for j := 0; j < len(input); j++ {
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := file.NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
-		if rt1.Init() != nil {
+		if rt1.Init("a", chutils.MergeTree) != nil {
 			t.Errorf("unexpected Init error")
+		}
+		if e := rt1.TableSpec().Impute(rt1, 0, .95); e != nil {
+			t.Errorf("unexpected error in Impute")
+		}
+		if e := rt1.TableSpec().Check(); e != nil {
+			t.Errorf("unexpected error in Check")
 		}
 		fd := &chutils.FieldDef{
 			Name:        "validation",
@@ -100,10 +106,13 @@ func ExampleReader_Read() {
 		}
 	}()
 	// initialize TableSpec
-	if e := baseReader.Init(); e != nil {
+	if e := baseReader.Init("x", chutils.MergeTree); e != nil {
 		log.Fatalln(e)
 	}
 	if err := baseReader.TableSpec().Impute(baseReader, 0, .95); err != nil {
+		log.Fatalln(err)
+	}
+	if err = baseReader.TableSpec().Check(); err != nil {
 		log.Fatalln(err)
 	}
 	fd := &chutils.FieldDef{
@@ -158,7 +167,7 @@ func ExampleReader_Read_additional() {
 		}
 	}()
 	// initialize TableSpec
-	if e := baseReader.Init(); e != nil {
+	if e := baseReader.Init("x", chutils.MergeTree); e != nil {
 		log.Fatalln(e)
 	}
 	if e := baseReader.TableSpec().Impute(baseReader, 0, .95); e != nil {
