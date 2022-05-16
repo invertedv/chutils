@@ -118,7 +118,7 @@ func NewConnect(http string, host string, user string, password string) (con *Co
 	var db *sql.DB
 	err = nil
 	con = &Connect{http, host, user, password, db}
-	if con.DB, err = sql.Open("clickhouse", con.String()); err != nil {
+	if con.DB, err = sql.Open("chhttp", con.String()); err != nil {
 		return
 	}
 	return con, con.DB.Ping()
