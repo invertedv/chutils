@@ -1,9 +1,9 @@
 ### package chutils
 
 ClickHouse is an excellent database for analysis applications.  It's exceptionally fast and has super useful
-data structures (Nested!).  It's my go-to solution.
+data structures (such as Nested Arrays).
 
-Getting text files into most any database can be a hassle. There is often random garbage in fields.
+Getting text files into most databases can be a hassle. There is often random garbage in fields.
 Column order varies.  The destination table has to exist.  For materializing output of a query,
 ClickHouse supports CREATE MATERIALIZED VIEW. This view updates any time the underlying table(s) update.
 There may be times when that's not what you want.  Then you're on your own generating CREATE TABLE statements.
@@ -24,7 +24,7 @@ Features include:
 - Import fixed-width (flat) files.
 - Range checking for int/float fields
 - Levels checking for String/FixedString fields
-- More complex adjustments to field that are more easily implemented in Go than SQL
+- Complex adjustments to a field that are more easily implemented in Go than SQL
 - Creation of new fields
 - Reading from either text files or SQL
 - ClickHouse CREATE TABLE generation

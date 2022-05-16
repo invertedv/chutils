@@ -420,7 +420,7 @@ func (td *TableDef) Nest(nestName string, field1 string, field2 string) error {
 	return nil
 }
 
-// isNested checks whether the the field indexed by ind in td.FieldDefs is the start or end of a nest.\
+// isNested checks whether the field indexed by ind in td.FieldDefs is the start or end of a nest.\
 // returns the start or end string for nesting if it is.
 func (td *TableDef) isNested(ind int) (start string, end string) {
 	for k, v := range td.nested {

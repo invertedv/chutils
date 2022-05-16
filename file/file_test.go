@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/invertedv/chutils"
-	_ "github.com/mailru/go-clickhouse"
+	_ "github.com/mailru/go-clickhouse/v2"
 	"log"
 	"os"
 	"strings"
@@ -283,7 +283,7 @@ func TestWriter_Export(t *testing.T) {
 		t.Errorf("expected %s got %s", result, f.buf)
 	}
 
-	// once we specify the type of a as ChInt, the single quote goes away
+	// once we specify the type of "a" as ChInt, the single quote goes away
 	fdx.ChSpec.Base = chutils.ChInt
 	fdx.ChSpec.Length = 32
 	result = "1,'2'\n3,'4'\n5,'6'\n7,'8'\n9,'19'\n"
