@@ -73,9 +73,6 @@ import (
 	"time"
 )
 
-// TODO: version numbers
-// TODO: use format on write for floats
-
 // Missing values used when the user does not supply them
 var (
 	DateMissing   = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
