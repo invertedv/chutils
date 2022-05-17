@@ -31,7 +31,7 @@ type Reader struct {
 //   - rdr a base reader that satisfies chutils.Input.
 //   - newFields an array that defines the additional fields
 //   - newCalcs an array of functions that populate the additional fields
-func NewReader(rdr chutils.Input, newFields map[int]*chutils.FieldDef, newCalcs []NewCalcFn) (*Reader, error) {
+func NewReader(rdr chutils.Input, newFields []*chutils.FieldDef, newCalcs []NewCalcFn) (*Reader, error) {
 	if len(newFields) != len(newCalcs) {
 		return nil, chutils.Wrapper(chutils.ErrFieldCount, "# new fields != # new calc functions")
 	}

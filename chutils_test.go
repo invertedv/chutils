@@ -129,10 +129,8 @@ func TestFieldDef_Validator(t *testing.T) {
 		case ChInt, ChFloat:
 			fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec.Length = highs[r], lows[r], 64
 		case ChString:
-			levels := make(map[string]int)
-			levels["abc"] = 1
-			levels["def"] = 1
-			fd.Legal.Levels = &levels
+			levels := []string{"abc", "def"}
+			fd.Legal.Levels = levels
 		case ChDate:
 			fd.ChSpec.Format = "2006/01/02"
 			dt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -67,8 +67,7 @@ func TestReader_Read(t *testing.T) {
 			Missing:     "!",
 			Width:       0,
 		}
-		newFields := make(map[int]*chutils.FieldDef)
-		newFields[0] = fd
+		newFields := []*chutils.FieldDef{fd}
 		newCalcs := make([]NewCalcFn, 0)
 		newCalcs = append(newCalcs, NewVars)
 		rt2, err := NewReader(rt1, newFields, newCalcs)
@@ -125,8 +124,7 @@ func ExampleReader_Read() {
 	}
 	fd.Legal.LowLimit, fd.Legal.HighLimit = 0.0, 100.0
 	// Create map with new field
-	newFields := make(map[int]*chutils.FieldDef)
-	newFields[0] = fd
+	newFields := []*chutils.FieldDef{fd}
 	// Create slice of function to calculate this
 	newCalcs := make([]NewCalcFn, 0)
 	newCalcs = append(newCalcs,
@@ -183,8 +181,7 @@ func ExampleReader_Read_additional() {
 	}
 	fd.Legal.LowLimit, fd.Legal.HighLimit = 0.0, 100.0
 	// Create map with new field
-	newFields := make(map[int]*chutils.FieldDef)
-	newFields[0] = fd
+	newFields := []*chutils.FieldDef{fd}
 	// Create slice of function to calculate this
 	newCalcs := make([]NewCalcFn, 0)
 	newCalcs = append(newCalcs,

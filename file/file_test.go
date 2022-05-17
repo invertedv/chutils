@@ -167,11 +167,9 @@ func TestReader_Read(t *testing.T) {
 	dtmin, _ := time.Parse("2006-01-02", "2000-01-01")
 	mins := []interface{}{dtmin, 0.0, "", "", int64(0), dtmin, "", 0.0, dtmin}
 
-	mp := make(map[string]int)
-	mp["BD"] = 1
-	mp1 := make(map[string]int)
-	mp1["HI"] = 1
-	levels := []map[string]int{nil, nil, nil, mp, nil, nil, nil, nil, nil, mp1}
+	mp := []string{"BD"}
+	mp1 := []string{"HI"}
+	levels := [][]string{nil, nil, nil, mp, nil, nil, nil, nil, nil, mp1}
 
 	// test values
 	col = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
@@ -198,7 +196,7 @@ func TestReader_Read(t *testing.T) {
 			fd.Legal.LowLimit = mins[j]
 		}
 		if base[j] == chutils.ChString || base[j] == chutils.ChFixedString {
-			fd.Legal.Levels = &levels[j]
+			fd.Legal.Levels = levels[j]
 		}
 		if base[j] == chutils.ChDate {
 			if dx, ok := maxes[j].(time.Time); ok {
@@ -371,9 +369,8 @@ func ExampleReader_Read_cSV() {
 	fd.ChSpec.Base = chutils.ChFixedString
 	fd.ChSpec.Length = 5
 	fd.Missing = "00000"
-	legal := make(map[string]int)
-	legal["90210"], legal["43210"], legal["77810"], legal["94043"] = 1, 1, 1, 1
-	fd.Legal.Levels = &legal
+	legal := []string{"90210", "43210", "77810", "94043"}
+	fd.Legal.Levels = legal
 
 	// Specify value as having a range of [0,30] with a missing value of -1.0
 	_, fd, err = rdr.TableSpec().Get("value")

@@ -8,7 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
 	"github.com/invertedv/chutils/file"
-	//	_ "github.com/mailru/go-clickhouse"
+	_ "github.com/mailru/go-clickhouse/v2"
 	"github.com/stretchr/testify/assert"
 	"log"
 	"os"
@@ -299,9 +299,8 @@ func ExampleWriter_Write() {
 	fd.ChSpec.Base = chutils.ChFixedString
 	fd.ChSpec.Length = 5
 	fd.Missing = "00000"
-	legal := make(map[string]int)
-	legal["90210"], legal["43210"], legal["77810"], legal["94043"] = 1, 1, 1, 1
-	fd.Legal.Levels = &legal
+	legal := []string{"90210", "43210", "77810", "94043"}
+	fd.Legal.Levels = legal
 
 	// Specify value as having a range of [0,30] with a missing value of -1.0
 	_, fd, err = rdr.TableSpec().Get("value")

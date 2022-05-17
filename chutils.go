@@ -229,15 +229,15 @@ func (t ChField) Converter(inValue interface{}, missing interface{}) (interface{
 
 // LegalValues holds bounds and lists of legal values for a ClickHouse field
 type LegalValues struct {
-	LowLimit  interface{}     // Minimum legal value for types Int, Float
-	HighLimit interface{}     // Maximum legal value for types Int, Float
-	Levels    *map[string]int // Legal values for types String, FixedString
+	LowLimit  interface{} // Minimum legal value for types Int, Float
+	HighLimit interface{} // Maximum legal value for types Int, Float
+	Levels    []string    // Legal values for types String, FixedString
 }
 
 // NewLegalValues creates a new LegalValues type
 func NewLegalValues() *LegalValues {
-	x := make(map[string]int)
-	return &LegalValues{Levels: &x}
+	x := make([]string, 0)
+	return &LegalValues{Levels: x}
 }
 
 // CheckRange checks whether checkVal is a legal value. Returns fd.Missing, if not.
@@ -246,11 +246,11 @@ func (fd *FieldDef) CheckRange(checkVal interface{}) (interface{}, Status) {
 	switch val := checkVal.(type) {
 	case string:
 		// nothing to do?
-		if fd.Legal.Levels == nil || len(*fd.Legal.Levels) == 0 {
+		if fd.Legal.Levels == nil || len(fd.Legal.Levels) == 0 {
 			return checkVal, VPass
 		}
 		// check if this is supposed to be a numeric field.
-		for rx := range *fd.Legal.Levels {
+		for _, rx := range fd.Legal.Levels {
 			if val == rx {
 				return checkVal, VPass
 			}
@@ -521,8 +521,6 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 			switch {
 			case counts[ind].dates >= thresh:
 				fd.ChSpec.Base, fd.ChSpec.Length = ChDate, 0
-				//				fd.Legal.Levels, fd.Legal.HighLimit, fd.Legal.LowLimit = nil, nil, nil
-				//				fd.Legal.LowLimit, fd.Legal.HighLimit = counts[ind].legal.LowLimit, counts[ind].legal.HighLimit
 				fd.Missing = DateMissing
 			case counts[ind].ints >= thresh:
 				fd.ChSpec.Base, fd.ChSpec.Length = ChInt, 64
