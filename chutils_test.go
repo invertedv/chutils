@@ -1,6 +1,7 @@
 package chutils
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -108,19 +109,21 @@ func TestTableDef_Impute(t *testing.T) {
 
 func TestFieldDef_Validator(t *testing.T) {
 	td := buildTableDef()
-	types := []ChType{ChInt, ChFloat, ChString, ChDate}
-	highs := []interface{}{int64(3), 5.5, ""}
-	lows := []interface{}{int64(0), 1.0, ""}
+	types := []ChType{ChInt, ChFloat, ChString, ChDate, ChFixedString}
+	highs := []interface{}{int64(3), 5.5, "", ""}
+	lows := []interface{}{int64(0), 1.0, "", ""}
 	inputs := [][]interface{}{{"1", "a", "1.4", "111"},
 		{"1.1", "a", "-10.0"},
 		{"hello", "abc"},
 		{"1/2/2020", "2020/06/07", "1/2/2006", "1999/01/01"},
+		{"A", "CC"},
 	}
 	expected := [][]Status{
 		{VPass, VTypeFail, VTypeFail, VValueFail},
 		{VPass, VTypeFail, VValueFail},
 		{VValueFail, VPass},
 		{VTypeFail, VPass, VTypeFail, VValueFail},
+		{VPass, VTypeFail},
 	}
 	fd := td.FieldDefs[0]
 	for r, ty := range types {
@@ -128,6 +131,9 @@ func TestFieldDef_Validator(t *testing.T) {
 		switch ty {
 		case ChInt, ChFloat:
 			fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec.Length = highs[r], lows[r], 64
+		case ChFixedString:
+			fd.ChSpec.Length = 1
+			fd.Legal.Levels = nil
 		case ChString:
 			levels := []string{"abc", "def"}
 			fd.Legal.Levels = levels
@@ -148,6 +154,36 @@ func TestFieldDef_Validator(t *testing.T) {
 	}
 }
 
+func TestTableDef_Check(t *testing.T) {
+	fd1 := NewFieldDef("a", ChField{
+		Base:      ChString,
+		Length:    0,
+		OuterFunc: "",
+		Format:    "",
+	},
+		"", NewLegalValues(), "", 0)
+	fd2 := NewFieldDef("b", ChField{
+		Base:      ChString,
+		Length:    0,
+		OuterFunc: "",
+		Format:    "",
+	},
+		"", NewLegalValues(), "", 0)
+	fds := make(map[int]*FieldDef)
+	fds[0], fds[1] = fd1, fd2
+	td := NewTableDef("", MergeTree, fds)
+
+	keys := []string{"a", "a, b", "a, b, c"}
+	expected := []interface{}{nil, nil, ErrFields}
+	for j, k := range keys {
+		td.Key = k
+		e := td.Check()
+		if x := errors.Unwrap(e); x != expected[j] {
+			t.Errorf("expected %v got %v", expected[j], x)
+		}
+	}
+}
+
 func TestTableDef_Nest(t *testing.T) {
 	ch, err := NewChField(ChString, 0, "Array", "")
 	if err != nil {
@@ -164,6 +200,9 @@ func TestTableDef_Nest(t *testing.T) {
 		Engine:    MergeTree,
 		FieldDefs: fds,
 		nested:    nil,
+	}
+	if td.Nest("test", "f1", "f1") == nil {
+		t.Errorf("error in test 0")
 	}
 	if td.Nest("test", "f1", "f2") != nil {
 		t.Errorf("error in test 1")

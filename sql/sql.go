@@ -130,9 +130,12 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 			}
 			chf.Length = int(l)
 		}
-
+		name := c.Name()
+		if i := strings.Index(name, "."); i > 0 {
+			name = name[i+1:]
+		}
 		fd := &chutils.FieldDef{
-			Name:        c.Name(),
+			Name:        name,
 			ChSpec:      chf,
 			Description: "",
 			Legal:       chutils.NewLegalValues(),
@@ -212,55 +215,6 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 			row[ind] = *(values[ind].(*interface{}))
 		}
 
-		if validate && rdr.TableSpec().FieldDefs != nil {
-			vrow := make(chutils.Valid, ncols)
-			for ind := 0; ind < ncols; ind++ {
-				outValue, stat := rdr.TableSpec().FieldDefs[ind].Validator(row[ind])
-				row[ind] = outValue
-				vrow[ind] = stat
-			}
-			valid = append(valid, vrow)
-		}
-		data = append(data, row)
-	}
-	return
-}
-
-func (rdr *Reader) ReadOld(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
-	data = nil
-	valid = nil
-	if rdr.data == nil {
-		if rdr.data, err = rdr.conn.Query(rdr.Sql); err != nil {
-			return nil, nil, err
-		}
-	}
-	cols, err := rdr.data.Columns()
-	if err != nil {
-		return
-	}
-	ncols := len(cols)
-
-	for rowCount := 0; rowCount < nTarget; rowCount++ {
-		t := make([]interface{}, ncols)
-		for ind := 0; ind < ncols; ind++ {
-			t[ind] = new(sql.RawBytes)
-		}
-		if !rdr.data.Next() {
-			if e := rdr.Reset(); e != nil {
-				return nil, nil, e
-			}
-			return data, valid, io.EOF
-		}
-		rdr.RowsRead++
-		err = rdr.data.Scan(t...)
-		if err != nil {
-			return
-		}
-		row := make(chutils.Row, 0)
-		for ind := 0; ind < ncols; ind++ {
-			l := string(*t[ind].(*sql.RawBytes))
-			row = append(row, l)
-		}
 		if validate && rdr.TableSpec().FieldDefs != nil {
 			vrow := make(chutils.Valid, ncols)
 			for ind := 0; ind < ncols; ind++ {

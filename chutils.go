@@ -70,6 +70,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -245,6 +246,11 @@ func (fd *FieldDef) CheckRange(checkVal interface{}) (interface{}, Status) {
 
 	switch val := checkVal.(type) {
 	case string:
+		if fd.ChSpec.Base == ChFixedString {
+			if len(val) > fd.ChSpec.Length {
+				return fd.Missing, VTypeFail
+			}
+		}
 		// nothing to do?
 		if fd.Legal.Levels == nil || len(fd.Legal.Levels) == 0 {
 			return checkVal, VPass
@@ -382,19 +388,22 @@ func NewTableDef(key string, engine EngineType, fielddefs map[int]*FieldDef) *Ta
 }
 
 // Nest defines a set of fields in [field1, field2] as being nested with name nestName
-func (td *TableDef) Nest(nestName string, field1 string, field2 string) error {
+func (td *TableDef) Nest(nestName string, firstField string, lastField string) error {
 	_, ok := td.nested[nestName]
 	if ok {
 		return Wrapper(ErrFields, fmt.Sprintf("nested name %s already exists", nestName))
 	}
-	ind1, fd, err := td.Get(field1)
+	if firstField == lastField {
+		return Wrapper(ErrFields, "nests must have at least two fields")
+	}
+	ind1, fd, err := td.Get(firstField)
 	if err != nil {
 		return err
 	}
 	if fd.ChSpec.OuterFunc != "Array" {
 		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
 	}
-	ind2, fd, err := td.Get(field2)
+	ind2, fd, err := td.Get(lastField)
 	if fd.ChSpec.OuterFunc != "Array" {
 		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
 	}
@@ -598,10 +607,13 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 func (td *TableDef) Check() error {
 	var outerfs = [3]string{"Array", "LowCardinality", "Nullable"}
 
-	// see if key is in the table
-	if _, _, e := td.Get(td.Key); e != nil {
-		return Wrapper(ErrFields, fmt.Sprintf("key %s is not in the table", td.Key))
+	// see if key(s) are in the table
+	for _, k := range strings.Split(td.Key, ",") {
+		if _, _, e := td.Get(strings.Trim(k, " ")); e != nil {
+			return Wrapper(ErrFields, fmt.Sprintf("key %s is not in the table", td.Key))
+		}
 	}
+
 	// work through the fields, validate types, ranges/levels and Missing values.
 	for _, fd := range td.FieldDefs {
 		// Check OuterFunc is legit

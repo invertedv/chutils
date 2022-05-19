@@ -174,7 +174,7 @@ func TestReader_Read(t *testing.T) {
 	// test values
 	col = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
 	dt, _ := time.Parse("2006-01-02", "2000-01-03")
-	result1 := []interface{}{dt, 3.4, "A", "BD", int64(42), dtmiss, "ABCD", -1.0, dtmiss, "X"}
+	result1 := []interface{}{dt, 3.4, "A", "BD", int64(42), dtmiss, "!", -1.0, dtmiss, "X"}
 
 	rt := &rstr{*strings.NewReader(inputc)}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
