@@ -330,7 +330,7 @@ func ExampleReader_Read_cSV() {
 	const tmpFile = "/home/will/tmp/tmp.csv"     // temp file to write data to for import
 	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("http", "127.0.0.1", "tester", "testGoNow")
+	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", 40000000000)
 	if err != nil {
 		log.Fatalln(err)
 	}

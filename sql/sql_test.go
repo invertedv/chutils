@@ -20,7 +20,7 @@ func TestReader_Init(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
 	var err error
-	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
+	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -69,7 +69,7 @@ func TestReader_Read(t *testing.T) {
 	var mock sqlmock.Sqlmock
 	var err error
 	//	con := &chutils.Connect{"", "", "", "", db}
-	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
+	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -156,7 +156,7 @@ func TestReader_Seek(t *testing.T) {
 	var mock sqlmock.Sqlmock
 	var err error
 	//	con := &chutils.Connect{"", "", "", "", db}
-	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
+	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -221,7 +221,7 @@ func TestWriter_Insert(t *testing.T) {
 	var mock sqlmock.Sqlmock
 	var err error
 	//	con := &chutils.Connect{"", "", "", "", db}
-	con := &chutils.Connect{Http: "", Host: "", User: "", Password: "", DB: db}
+	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
 		return
@@ -264,7 +264,7 @@ func ExampleWriter_Write() {
 	const inFile = "/home/will/tmp/zip_data.csv" // source data
 	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("http", "127.0.0.1", "tester", "testGoNow")
+	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", 40000000000)
 	if err != nil {
 		log.Fatalln(err)
 	}

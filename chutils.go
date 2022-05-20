@@ -65,6 +65,7 @@ package chutils
 import (
 	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"io"
 	"math"
 	"reflect"
@@ -108,26 +109,35 @@ type Output interface {
 
 // Connect holds the ClickHouse connect information
 type Connect struct {
-	Http     string // Http is "http" or "https"
 	Host     string // Host is host IP
 	User     string // User is ClickHouse user name
 	Password string // Password is user's password
 	*sql.DB         // ClickHouse database connector
 }
 
-func NewConnect(http string, host string, user string, password string) (con *Connect, err error) {
+// NewConnect established a new connection to ClickHouse.
+// host is IP address (assumes port 9000), memory is max_memory_usage
+func NewConnect(host string, user string, password string, memory int) (con *Connect, err error) {
 	var db *sql.DB
 	err = nil
-	con = &Connect{http, host, user, password, db}
-	if con.DB, err = sql.Open("chhttp", con.String()); err != nil {
-		return
-	}
+	con = &Connect{host, user, password, db}
+	con.DB = clickhouse.OpenDB(
+		&clickhouse.Options{
+			Addr: []string{host + ":9000"},
+			Auth: clickhouse.Auth{
+				Database: "default",
+				Username: user,
+				Password: password,
+			},
+			Settings: clickhouse.Settings{
+				"max_memory_usage": memory,
+			},
+			DialTimeout: 5 * time.Second,
+			Compression: &clickhouse.Compression{
+				clickhouse.CompressionLZ4,
+			},
+		})
 	return con, con.DB.Ping()
-}
-
-// ClickHouse connect string
-func (c Connect) String() string {
-	return fmt.Sprintf("%s://%s:8123/?user=%s&password=%s", c.Http, c.Host, c.User, c.Password)
 }
 
 // ErrType enum specifies the different error types trapped
