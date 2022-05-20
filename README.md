@@ -5,8 +5,9 @@ data structures (such as Nested Arrays).
 
 Getting text files into most databases can be a hassle. There is often random garbage in fields.
 Column order varies.  The destination table has to exist.  For materializing output of a query,
-ClickHouse supports CREATE MATERIALIZED VIEW. This view updates any time the underlying table(s) update.
-There may be times when that's not what you want.  Then you're on your own generating CREATE TABLE statements.
+ClickHouse supports CREATE MATERIALIZED VIEW or you can also create a table from the output of a query
+as CREATE TABLE from SELECT Query.  Even in these cases, there may be other changes you may wish to make.
+For instance, nesting arrays or data validation.
 
 The chutils package facilitates these types of functions. The principal use cases are:
 

@@ -429,12 +429,11 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 	return nil
 }
 
-// isNested checks whether the field indexed by ind in td.FieldDefs is the start or end of a nest.\
-// returns the start or end string for nesting if it is.
+// isNested returns the nest name for the first field in the nest and ")" for the last field
 func (td *TableDef) isNested(ind int) (start string, end string) {
 	for k, v := range td.nested {
 		if ind == v[0] {
-			return fmt.Sprintf("%s Nested(\n", k), ""
+			return k, "" // fmt.Sprintf("%s Nested(\n", k), ""
 		}
 		if ind == v[1] {
 			return "", ")"
@@ -562,10 +561,17 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 
 	// build CREATE TABLE statement
 	qry = fmt.Sprintf("CREATE TABLE %v (", table)
+	alter := make([]string, 0)
 	isNested := false
+	currentNest := ""
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
-		nestStart, nestEnd := td.isNested(ind)
-		isNested = isNested || (nestStart != "")
+		nestName, nestEnd := td.isNested(ind)
+		nestStr := ""
+		if nestName != "" {
+			nestStr = fmt.Sprintf("%s Nested(\n", nestName)
+			currentNest = nestName
+		}
+		isNested = isNested || (nestName != "")
 		fd := td.FieldDefs[ind]
 		// start by creating the ClickHouse type
 		ftype := fmt.Sprintf("%v", fd.ChSpec.Base)
@@ -581,10 +587,16 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 			}
 		}
 		// Prepend field name and nest.
-		ftype = fmt.Sprintf("%s %s     %s", nestStart, fd.Name, ftype)
+
+		ftype = fmt.Sprintf("%s %s     %s", nestStr, fd.Name, ftype)
 		// add comment
 		if fd.Description != "" {
-			ftype = fmt.Sprintf("%s     comment '%s'", ftype, fd.Description)
+			if !isNested {
+				ftype = fmt.Sprintf("%s     comment '%s'", ftype, fd.Description)
+			} else {
+				alter = append(alter, fmt.Sprintf("ALTER TABLE %s comment COLUMN %s.%s '%s'", table, currentNest,
+					fd.Name, fd.Description))
+			}
 		}
 		// Determine trailing character.
 		char := ","
@@ -597,8 +609,17 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
-	_, err := conn.Exec(qry)
-	return err
+	if _, err := conn.Exec(qry); err != nil {
+		return err
+	}
+	// Putting a comment in a CREATE TABLE for a nested field throws an error in ClickHouse
+	for _, qry := range alter {
+		if _, err := conn.Exec(qry); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Check verifies that the fields are of the type chutils supports.  Check also converts, if needed, the
