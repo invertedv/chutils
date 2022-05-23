@@ -461,17 +461,11 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 	if firstField == lastField {
 		return Wrapper(ErrFields, "nests must have at least two fields")
 	}
-	ind1, fd, err := td.Get(firstField)
+	ind1, _, err := td.Get(firstField)
 	if err != nil {
 		return err
 	}
-	if !fd.ChSpec.Funcs.Has(OuterArray) {
-		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
-	}
-	ind2, fd, err := td.Get(lastField)
-	if !fd.ChSpec.Funcs.Has(OuterArray) {
-		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
-	}
+	ind2, _, err := td.Get(lastField)
 	if err != nil {
 		return err
 	}
@@ -479,6 +473,20 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 		tmp := ind1
 		ind1 = ind2
 		ind2 = tmp
+	}
+	// check all nested fields are arrays and remove array outer function -- it is implied for nested fields
+	for ind := ind1; ind <= ind2; ind++ {
+		fd := td.FieldDefs[ind]
+		if !fd.ChSpec.Funcs.Has(OuterArray) {
+			return Wrapper(ErrFields, fmt.Sprintf("field %s must be an array to be nested", fd.Name))
+		}
+		var newOuter OuterFuncs = nil
+		for _, fn := range fd.ChSpec.Funcs {
+			if fn != OuterArray {
+				newOuter = append(newOuter, fn)
+			}
+		}
+		fd.ChSpec.Funcs = newOuter
 	}
 	if td.nested != nil {
 		for k, v := range td.nested {
