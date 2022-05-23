@@ -766,7 +766,9 @@ func writeArray(el interface{}, char string) (line []byte) {
 }
 
 // Export transfers the contents of rdr to wrtr.
-func Export(rdr Input, wrtr Output) error {
+// if after == 0 then issues wrtr.Insert when it is done
+// if after > 0 then issues wrtr.Insert every 'after' lines (useful for sql Writers to prevent memory issues)
+func Export(rdr Input, wrtr Output, after int) error {
 
 	var data []Row
 	for r := 0; ; r++ {
@@ -774,6 +776,11 @@ func Export(rdr Input, wrtr Output) error {
 		if data, _, err = rdr.Read(1, true); err != nil {
 			// no need to report EOF
 			if err == io.EOF {
+				if after >= 0 {
+					if e := wrtr.Insert(); e != nil {
+						return e
+					}
+				}
 				return nil
 			}
 			if err != nil {
@@ -801,21 +808,23 @@ func Export(rdr Input, wrtr Output) error {
 		if _, err = wrtr.Write(line); err != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 		}
+		if r > 0 && after > 0 && r%after == 0 {
+			if e := wrtr.Insert(); e != nil {
+				return e
+			}
+		}
 	}
 }
 
-// Load reads lines from rdr, writes them to wrtr and finally Inserts the data into table.
-func Load(rdr Input, wrtr Output) (err error) {
-	err = Export(rdr, wrtr)
-	if err != nil {
-		return
-	}
-	err = wrtr.Insert()
-	return
-}
-
-// Concur executes function f concurrently on a slice of Inputs/Outputs.
-func Concur(nWorker int, rdrs []Input, wrtrs []Output, f func(rdr Input, wrtr Output) error) error {
+// Concur executes Export concurrently on a slice of Inputs/Outputs.
+func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
+	queueLen := len(rdrs)
+	defer func() {
+		for ind := 0; ind < queueLen; ind++ {
+			rdrs[ind].Close()
+			wrtrs[ind].Close()
+		}
+	}()
 	start := time.Now()
 	if nWorker == 0 {
 		nWorker = runtime.NumCPU()
@@ -823,7 +832,6 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, f func(rdr Input, wrtr Ou
 	if len(rdrs) != len(wrtrs) {
 		return Wrapper(ErrRWNum, fmt.Sprintf("%v %v", len(rdrs), len(wrtrs)))
 	}
-	queueLen := len(rdrs)
 	if nWorker > queueLen {
 		nWorker = queueLen
 	}
@@ -833,7 +841,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, f func(rdr Input, wrtr Ou
 	for ind := 0; ind < queueLen; ind++ {
 		ind := ind // Required since the function below is a closure
 		go func() {
-			c <- f(rdrs[ind], wrtrs[ind])
+			c <- Export(rdrs[ind], wrtrs[ind], after)
 		}()
 		running++
 		if running == nWorker {
@@ -851,11 +859,6 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, f func(rdr Input, wrtr Ou
 			return e
 		}
 		running--
-	}
-	for ind := 0; ind < queueLen; ind++ {
-		if err := rdrs[ind].Close(); err != nil {
-			return err
-		}
 	}
 	elapsed := time.Since(start)
 	fmt.Println("Elapsed time", elapsed.Seconds(), "seconds")

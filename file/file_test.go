@@ -274,7 +274,7 @@ func TestWriter_Export(t *testing.T) {
 	fdx.ChSpec.Base = chutils.ChString
 	_, fdx, _ = rt1.TableSpec().Get("a")
 	fdx.ChSpec.Base = chutils.ChString
-	if chutils.Export(rt1, wtr) != nil {
+	if chutils.Export(rt1, wtr, -1) != nil {
 		t.Errorf("unexpected Export error")
 	}
 	if result != f.buf {
@@ -293,7 +293,7 @@ func TestWriter_Export(t *testing.T) {
 	fd.ChSpec.Length = 64
 	f = &wstr{""}
 	wtr = NewWriter(f, "A", &con, ',', '\n', "table")
-	if chutils.Export(rt1, wtr) != nil {
+	if chutils.Export(rt1, wtr, -1) != nil {
 		t.Errorf("unexpected Export error")
 	}
 	if result != f.buf {
@@ -402,7 +402,7 @@ func ExampleReader_Read_cSV() {
 		}
 	}()
 	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
-	if err := chutils.Load(rdr, wrtr); err != nil {
+	if err := chutils.Export(rdr, wrtr, 0); err != nil {
 		log.Fatalln(err)
 	}
 	qry := fmt.Sprintf("SELECT * FROM %s", table)

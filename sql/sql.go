@@ -329,6 +329,7 @@ func (wtr *Writer) Insert() error {
 	}
 	qry := fmt.Sprintf("INSERT INTO %s VALUES", wtr.Table) + string(wtr.hold) + ")"
 	_, err := wtr.conn.Exec(qry)
+	err = wtr.Close()
 	return err
 }
 
