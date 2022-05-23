@@ -77,23 +77,23 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 	fds := make(map[int]*chutils.FieldDef)
 	for ind, c := range ct {
 		chf := chutils.ChField{
-			Base:      0,
-			Length:    0,
-			OuterFunc: "",
-			Format:    "",
+			Base:   0,
+			Length: 0,
+			Funcs:  nil,
+			Format: "",
 		}
 		// parse DataBaseTypeName
 		tn := c.DatabaseTypeName()
 		if strings.Contains(tn, "Array") {
-			chf.OuterFunc = "Array"
+			chf.Funcs = append(chf.Funcs, chutils.OuterArray)
 			tn = tn[6 : len(tn)-1]
 		}
 		if strings.Contains(tn, "Nullable") {
-			chf.OuterFunc = "Nullable"
+			chf.Funcs = append(chf.Funcs, chutils.OuterNullable)
 			tn = tn[9 : len(tn)-1]
 		}
 		if strings.Contains(tn, "LowCardinality") {
-			chf.OuterFunc = "LowCardinality"
+			chf.Funcs = append(chf.Funcs, chutils.OuterLowCardinality)
 			tn = tn[15 : len(tn)-1]
 		}
 		types := []string{"Date", "Int", "Float", "FixedString", "String"}

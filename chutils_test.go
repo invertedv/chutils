@@ -3,6 +3,7 @@ package chutils
 import (
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"testing"
 	"time"
@@ -156,17 +157,17 @@ func TestFieldDef_Validator(t *testing.T) {
 
 func TestTableDef_Check(t *testing.T) {
 	fd1 := NewFieldDef("a", ChField{
-		Base:      ChString,
-		Length:    0,
-		OuterFunc: "",
-		Format:    "",
+		Base:   ChString,
+		Length: 0,
+		Funcs:  nil,
+		Format: "",
 	},
 		"", NewLegalValues(), "", 0)
 	fd2 := NewFieldDef("b", ChField{
-		Base:      ChString,
-		Length:    0,
-		OuterFunc: "",
-		Format:    "",
+		Base:   ChString,
+		Length: 0,
+		Funcs:  nil,
+		Format: "",
 	},
 		"", NewLegalValues(), "", 0)
 	fds := make(map[int]*FieldDef)
@@ -185,15 +186,18 @@ func TestTableDef_Check(t *testing.T) {
 }
 
 func TestTableDef_Nest(t *testing.T) {
-	ch, err := NewChField(ChString, 0, "Array", "")
-	if err != nil {
-		t.Errorf("unexpected error in new ChField")
+	//	ch, err := NewChField(ChString, 0, OuterFuncs{OuterArray}, "")
+	ch := ChField{
+		Base:   ChString,
+		Length: 0,
+		Funcs:  OuterFuncs{OuterArray},
+		Format: "",
 	}
 	fds := make(map[int]*FieldDef)
-	fd1 := NewFieldDef("f1", *ch, "", NewLegalValues(), nil, 0)
-	fd2 := NewFieldDef("f2", *ch, "", NewLegalValues(), nil, 0)
-	fd3 := NewFieldDef("f3", *ch, "", NewLegalValues(), nil, 0)
-	fd4 := NewFieldDef("f4", *ch, "", NewLegalValues(), nil, 0)
+	fd1 := NewFieldDef("f1", ch, "", NewLegalValues(), nil, 0)
+	fd2 := NewFieldDef("f2", ch, "", NewLegalValues(), nil, 0)
+	fd3 := NewFieldDef("f3", ch, "", NewLegalValues(), nil, 0)
+	fd4 := NewFieldDef("f4", ch, "", NewLegalValues(), nil, 0)
 	fds[0], fds[1], fds[2], fds[3] = fd1, fd2, fd3, fd4
 	td := TableDef{
 		Key:       "f1",
@@ -215,5 +219,33 @@ func TestTableDef_Nest(t *testing.T) {
 	}
 	if td.Nest("test1", "f3", "f4") != nil {
 		t.Errorf("error in test4")
+	}
+}
+
+func TestChType_String(t *testing.T) {
+	expect := []string{"LowCardinality(Nullable(FixedString(1)))", "LowCardinality(Nullable(Int64))",
+		"Array(LowCardinality(Nullable(Int64)))"}
+	ch1 := ChField{
+		Base:   ChFixedString,
+		Length: 1,
+		Funcs:  OuterFuncs{OuterNullable, OuterLowCardinality},
+		Format: "",
+	}
+	ch2 := ChField{
+		Base:   ChInt,
+		Length: 64,
+		Funcs:  OuterFuncs{OuterNullable, OuterLowCardinality},
+		Format: "",
+	}
+	ch3 := ChField{
+		Base:   ChInt,
+		Length: 64,
+		Funcs:  OuterFuncs{OuterNullable, OuterLowCardinality, OuterArray},
+		Format: "",
+	}
+	chs := []ChField{ch1, ch2, ch3}
+	for j, ch := range chs {
+		v := fmt.Sprintf("%v", ch)
+		assert.Equal(t, expect[j], v)
 	}
 }

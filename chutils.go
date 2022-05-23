@@ -206,32 +206,87 @@ func (t ChType) String() string {
 	return ""
 }
 
-// ChField struct holds the specification for a ClickHouse field
-type ChField struct {
-	Base      ChType // Base is base type of ClickHouse field.
-	Length    int    // Length is length of field (0 for String).
-	OuterFunc string // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
-	Format    string // Format for incoming dates from Input, or outgoing Floats
+type OuterFunc int
+
+const (
+	OuterArray = 0 + iota
+	OuterLowCardinality
+	OuterNullable
+)
+
+func (o OuterFunc) String() string {
+	switch o {
+	case OuterArray:
+		return "Array"
+	case OuterLowCardinality:
+		return "LowCardinality"
+	case OuterNullable:
+		return "Nullable"
+	}
+	return ""
 }
 
-func NewChField(base ChType, length int, outerFunc string, Format string) (*ChField, error) {
-	if (base == ChInt || base == ChFloat) && !(length == 32 || length == 64) {
-		return nil, Wrapper(ErrFields, "length of int and float must be either 32 or 64")
+// OuterFuncs is a slice of OuterFunc since we can have multiple of these in a field
+type OuterFuncs []OuterFunc
+
+func (o OuterFuncs) Has(target OuterFunc) bool {
+	if len(o) == 0 {
+		return false
 	}
-	return &ChField{
-		Base:      base,
-		Length:    length,
-		OuterFunc: outerFunc,
-		Format:    Format,
-	}, nil
+	for _, t := range o {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
+// ChField struct holds the specification for a ClickHouse field
+type ChField struct {
+	Base   ChType     // Base is base type of ClickHouse field.
+	Length int        // Length is length of field (0 for String).
+	Funcs  OuterFuncs // OuterFunc is the outer function applied to the field (e.g. LowCardinality(), Nullable())
+	Format string     // Format for incoming dates from Input, or outgoing Floats
+}
+
+func (ch ChField) String() string {
+	ret := ""
+	cls := ""
+	targets := []OuterFunc{OuterArray, OuterLowCardinality, OuterNullable}
+	if len(ch.Funcs) > 0 {
+		for j := 0; j < len(targets); j++ {
+			if ch.Funcs.Has(targets[j]) {
+				ret += fmt.Sprintf("%v(", targets[j])
+				cls += ")"
+			}
+		}
+	}
+
+	chf := ""
+	switch ch.Base {
+	case ChString:
+		chf = "String"
+	case ChDate:
+		chf = "Date"
+	case ChFloat:
+		chf = fmt.Sprintf("Float%d", ch.Length)
+	case ChInt:
+		chf = fmt.Sprintf("Int%d", ch.Length)
+	case ChFixedString:
+		chf = fmt.Sprintf("FixedString(%d)", ch.Length)
+	default:
+		chf = "error"
+	}
+	return ret + chf + cls
+
 }
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
 // If the conversion is unsuccessful, the return value is "missing"
-func (t ChField) Converter(inValue interface{}, missing interface{}) (interface{}, Status) {
+func (ch ChField) Converter(inValue interface{}, missing interface{}) (interface{}, Status) {
 
-	outValue, ok := convert(inValue, t)
+	outValue, ok := convert(inValue, ch)
 	if !ok {
 		return missing, VTypeFail
 	}
@@ -410,11 +465,11 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 	if err != nil {
 		return err
 	}
-	if fd.ChSpec.OuterFunc != "Array" {
+	if !fd.ChSpec.Funcs.Has(OuterArray) {
 		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
 	}
 	ind2, fd, err := td.Get(lastField)
-	if fd.ChSpec.OuterFunc != "Array" {
+	if !fd.ChSpec.Funcs.Has(OuterArray) {
 		return Wrapper(ErrFields, fmt.Sprintf("can only nest arrays. %s is not an array", fd.Name))
 	}
 	if err != nil {
@@ -583,22 +638,7 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 		}
 		isNested = isNested || (nestName != "")
 		fd := td.FieldDefs[ind]
-		// start by creating the ClickHouse type
-		ftype := fmt.Sprintf("%v", fd.ChSpec.Base)
-		switch fd.ChSpec.Base {
-		case ChInt, ChFloat:
-			ftype = fmt.Sprintf("%s%d", ftype, fd.ChSpec.Length)
-		case ChFixedString:
-			ftype = fmt.Sprintf("%s(%d)", ftype, fd.ChSpec.Length)
-		}
-		if fd.ChSpec.OuterFunc != "" {
-			if !isNested {
-				ftype = fmt.Sprintf("%s(%s)", fd.ChSpec.OuterFunc, ftype)
-			}
-		}
-		// Prepend field name and nest.
-
-		ftype = fmt.Sprintf("%s %s     %s", nestStr, fd.Name, ftype)
+		ftype := fmt.Sprintf("%s %s %v", nestStr, fd.Name, fd.ChSpec)
 		// add comment
 		if fd.Description != "" {
 			if !isNested {
@@ -636,8 +676,6 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 // Legal.HighLimit and Legal.LowLimit and Missing interfaces to the correct type and checks LowLimit <= HighLimit.
 // It's a good idea to run Check before reading the data.
 func (td *TableDef) Check() error {
-	var outerfs = [3]string{"Array", "LowCardinality", "Nullable"}
-
 	// see if key(s) are in the table
 	for _, k := range strings.Split(td.Key, ",") {
 		if _, _, e := td.Get(strings.Trim(k, " ")); e != nil {
@@ -648,18 +686,6 @@ func (td *TableDef) Check() error {
 	// work through the fields, validate types, ranges/levels and Missing values.
 	for _, fd := range td.FieldDefs {
 		// Check OuterFunc is legit
-		if fd.ChSpec.OuterFunc != "" {
-			ok := false
-			for _, fn := range outerfs {
-				if fd.ChSpec.OuterFunc == fn {
-					ok = true
-					break
-				}
-			}
-			if !ok {
-				return Wrapper(ErrFields, fmt.Sprintf("unsupported outer function: %s", fd.ChSpec.OuterFunc))
-			}
-		}
 		switch t := fd.ChSpec.Base; t {
 		case ChFixedString:
 			if fd.ChSpec.Length == 0 {
