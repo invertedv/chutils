@@ -286,12 +286,12 @@ func (ch ChField) Converter(inValue interface{}, missing interface{}, deflt inte
 	// if there is a default value, see if we need it
 	if deflt != nil {
 		if inValue == nil {
-			return deflt, VPass
+			return deflt, VDefault
 		}
 		// check if the field is empty
 		if asStr, okx := inValue.(string); okx {
 			if asStr == "" {
-				return deflt, VPass
+				return deflt, VDefault
 			}
 		}
 	}
@@ -383,9 +383,10 @@ type Status int
 
 // Field Validation Status enum type
 const (
-	VPass      Status = 0 + iota // Pass: value is OK
+	VPass      Status = 0 + iota // VPass: value is OK
+	VDefault                     // VDefault: default value was used because field was empty
 	VValueFail                   // ValueFail: value is illegal
-	VTypeFail                    // TypeFail: value cannot be coerced to correct type
+	VTypeFail                    // VTypeFail: value cannot be coerced to correct type
 )
 
 //go:generate stringer -type=Status
