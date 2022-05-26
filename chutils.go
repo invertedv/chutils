@@ -117,7 +117,7 @@ type Connect struct {
 
 // NewConnect established a new connection to ClickHouse.
 // host is IP address (assumes port 9000), memory is max_memory_usage
-func NewConnect(host string, user string, password string, memory int) (con *Connect, err error) {
+func NewConnect(host string, user string, password string, settings clickhouse.Settings) (con *Connect, err error) {
 	var db *sql.DB
 	err = nil
 	con = &Connect{host, user, password, db}
@@ -129,9 +129,7 @@ func NewConnect(host string, user string, password string, memory int) (con *Con
 				Username: user,
 				Password: password,
 			},
-			Settings: clickhouse.Settings{
-				"max_memory_usage": memory,
-			},
+			Settings:    settings,
 			DialTimeout: 5 * time.Second,
 			Compression: &clickhouse.Compression{
 				clickhouse.CompressionLZ4,
@@ -284,8 +282,19 @@ func (ch ChField) String() string {
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
 // If the conversion is unsuccessful, the return value is "missing"
-func (ch ChField) Converter(inValue interface{}, missing interface{}) (interface{}, Status) {
-
+func (ch ChField) Converter(inValue interface{}, missing interface{}, deflt interface{}) (interface{}, Status) {
+	// if there is a default value, see if we need it
+	if deflt != nil {
+		if inValue == nil {
+			return deflt, VPass
+		}
+		// check if the field is empty
+		if asStr, okx := inValue.(string); okx {
+			if asStr == "" {
+				return deflt, VPass
+			}
+		}
+	}
 	outValue, ok := convert(inValue, ch)
 	if !ok {
 		return missing, VTypeFail
@@ -390,7 +399,8 @@ type FieldDef struct {
 	ChSpec      ChField      // ChSpec is the Clickhouse specification of field.
 	Description string       // Description is an optional description for CREATE TABLE statement.
 	Legal       *LegalValues // Legal are optional bounds/list of legal values.
-	Missing     interface{}  // Missing is the value used for a field if the value is missing/illegal.
+	Missing     interface{}  // Missing is the value used for a field if the value is illegal.
+	Default     interface{}  // Default is the value used for a field if the field is empty
 	Width       int          // Width of field (for flat files)
 }
 
@@ -425,7 +435,7 @@ func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status S
 	}
 
 	// convert to correct type (if needed)
-	if outVal, status = fd.ChSpec.Converter(inValue, fd.Missing); status != VPass {
+	if outVal, status = fd.ChSpec.Converter(inValue, fd.Missing, fd.Default); status != VPass {
 		return
 	}
 	// check against ranges/levels
@@ -706,6 +716,20 @@ func (td *TableDef) Check() error {
 				return Wrapper(ErrFields,
 					fmt.Sprintf("Floats and Ints must have length 32 or 64, field %s", fd.Name))
 			}
+			if fd.Missing != nil {
+				if x, ok = convert(fd.Missing, fd.ChSpec); !ok {
+					return Wrapper(ErrFields,
+						fmt.Sprintf("cannot coerce Missing value %v to %v, field: %s", fd.Missing, t, fd.Name))
+				}
+				fd.Missing = x
+			}
+			if fd.Default != nil {
+				if x, ok = convert(fd.Default, fd.ChSpec); !ok {
+					return Wrapper(ErrFields,
+						fmt.Sprintf("cannot coerce Default value %v to %v, field: %s", fd.Default, t, fd.Name))
+				}
+				fd.Default = x
+			}
 			if fd.Legal.HighLimit == nil && fd.Legal.LowLimit == nil {
 				continue
 			}
@@ -727,11 +751,6 @@ func (td *TableDef) Check() error {
 				return Wrapper(ErrFields,
 					fmt.Sprintf("LowLimit %v >= HighLimit %v, field: %s", fd.Legal.LowLimit, fd.Legal.HighLimit, fd.Name))
 			}
-			if x, ok = convert(fd.Missing, fd.ChSpec); !ok {
-				return Wrapper(ErrFields,
-					fmt.Sprintf("cannot coerce Missing value %v to %v, field: %s", fd.Missing, t, fd.Name))
-			}
-			fd.Missing = x
 		case ChUnknown:
 			return Wrapper(ErrFields, fmt.Sprintf("invalid ClickHouse type (ChUnknown), field: %s", fd.Name))
 		}
@@ -825,7 +844,6 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
 			wrtrs[ind].Close()
 		}
 	}()
-	start := time.Now()
 	if nWorker == 0 {
 		nWorker = runtime.NumCPU()
 	}
@@ -860,7 +878,5 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
 		}
 		running--
 	}
-	elapsed := time.Since(start)
-	fmt.Println("Elapsed time", elapsed.Seconds(), "seconds")
 	return nil
 }

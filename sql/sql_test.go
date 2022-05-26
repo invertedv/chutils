@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
 	"github.com/invertedv/chutils/file"
@@ -264,7 +265,7 @@ func ExampleWriter_Write() {
 	const inFile = "/home/will/tmp/zip_data.csv" // source data
 	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", 40000000000)
+	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
 	if err != nil {
 		log.Fatalln(err)
 	}

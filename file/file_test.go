@@ -3,8 +3,10 @@ package file
 import (
 	"errors"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/invertedv/chutils"
 	_ "github.com/mailru/go-clickhouse/v2"
+	"github.com/stretchr/testify/assert"
 	"log"
 	"os"
 	"strings"
@@ -115,12 +117,13 @@ func TestReader_Read(t *testing.T) {
 	input := []string{"a,b,c\n \"hello, mom\", 3, \"now, now\"\n,1,2,3\n",
 		"a,b\n1,2\n2,3\n",
 		"a,b\n1,2\n2,3\n",
-		"a,b,c\n1,2\n"}
-	row := []int{1, 1, 2, 1}
-	col := []int{0, 0, 1, 0}
-	quote := []rune{'"', '"', 0, '"'}
-	result := []string{"hello, mom", "1", "3", "ErrFieldCount"}
+		"a,b,c\n1,2\n",
+		"a,b,c\n\"\", , 3\n,\"hi\",2,3\n\"abc\", 33, 22"}
 
+	row := []int{1, 1, 2, 1, 1}
+	col := []int{0, 0, 1, 0, 0}
+	quote := []rune{'"', '"', 0, '"', '"'}
+	result := []string{"hello, mom", "1", "3", "ErrFieldCount", ""}
 	for j := 0; j < len(result); j++ {
 
 		rt := &rstr{*strings.NewReader(input[j])}
@@ -139,11 +142,11 @@ func TestReader_Read(t *testing.T) {
 		if e != nil {
 			if errors.Unwrap(e).(chutils.ErrType) == chutils.ErrFieldCount {
 				if result[j] == "ErrFieldCount" {
-					break
+					continue
 				}
 			}
 			t.Errorf("unexpected read error case %d", j)
-			break
+			continue
 		}
 		if d[0][col[j]] != result[j] {
 			t.Errorf("case %d element should be %v but got %v", j, result[j], d[0][0])
@@ -235,6 +238,35 @@ func TestReader_Read(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestReader_Read2 checks Default and missing values are working
+func TestReader_Read2(t *testing.T) {
+	input := "a,b,c\n \"\", ,3\n\"now, now\"\n,1,3,x\n"
+	expected := []interface{}{"X", int32(32), int32(3)}
+	rt := &rstr{*strings.NewReader(input)}
+	rt1 := NewReader("abc", ',', '\n', '"', 0, 1, 0, rt, 0)
+	if e := rt1.Init("a", chutils.MergeTree); e != nil {
+		t.Errorf("unexpected Init error, case %d", 0)
+	}
+	fd := rt1.TableSpec().FieldDefs[0]
+	fd.Default = "X"
+	fd.ChSpec = chutils.ChField{Base: chutils.ChString}
+
+	fd = rt1.TableSpec().FieldDefs[1]
+	fd.Default = 32
+	fd.ChSpec = chutils.ChField{Base: chutils.ChInt, Length: 32}
+	fd = rt1.TableSpec().FieldDefs[2]
+	fd.Missing = 3
+	fd.ChSpec = chutils.ChField{Base: chutils.ChInt, Length: 32}
+	if e := rt1.TableSpec().Check(); e != nil {
+		t.Errorf("unexpected tablecheck error")
+	}
+	data, _, err := rt1.Read(1, true)
+	if err != nil {
+		t.Errorf("unexpected read error")
+	}
+	assert.ElementsMatch(t, expected, data[0])
 }
 
 type wstr struct {
@@ -330,7 +362,7 @@ func ExampleReader_Read_cSV() {
 	const tmpFile = "/home/will/tmp/tmp.csv"     // temp file to write data to for import
 	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", 40000000000)
+	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
 	if err != nil {
 		log.Fatalln(err)
 	}
