@@ -403,6 +403,7 @@ type FieldDef struct {
 	Missing     interface{}  // Missing is the value used for a field if the value is illegal.
 	Default     interface{}  // Default is the value used for a field if the field is empty
 	Width       int          // Width of field (for flat files)
+	Drop        bool         // Drop, if True, instructs Outputs to ignore this field
 }
 
 func NewFieldDef(name string, chSpec ChField, description string, legal *LegalValues, missing interface{}, width int) *FieldDef {
@@ -648,7 +649,21 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	alter := make([]string, 0)
 	isNested := false
 	currentNest := ""
+
+	// remove any dropped fields
+	//	fds := make([]*FieldDef, 0)
+	//	for ind := 0; ind < len(td.FieldDefs); ind++ {
+	//		if !td.FieldDefs[ind].Drop {
+	//			fds = append(fds, td.FieldDefs[ind])
+	//		}
+	//	}
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
+
+		fd := td.FieldDefs[ind]
+		if fd.Drop {
+			continue
+		}
+
 		nestName, nestEnd := td.isNested(ind)
 		nestStr := ""
 		if nestName != "" {
@@ -656,7 +671,6 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 			currentNest = nestName
 		}
 		isNested = isNested || (nestName != "")
-		fd := td.FieldDefs[ind]
 		ftype := fmt.Sprintf("%s %s %v", nestStr, fd.Name, fd.ChSpec)
 		// add comment
 		if fd.Description != "" {
@@ -667,17 +681,15 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 					fd.Name, fd.Description))
 			}
 		}
-		// Determine trailing character.
-		char := ","
-		if ind == len(td.FieldDefs)-1 {
-			char = ")"
-		}
-		ftype = fmt.Sprintf("%s%s%s\n", ftype, nestEnd, char)
+
+		ftype = fmt.Sprintf("%s%s,\n", ftype, nestEnd)
 		isNested = isNested && !(nestEnd == ")")
 		// Add to create query.
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
-	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", qry, td.Engine, td.Key)
+	q := []byte(qry)
+	q[len(q)-2] = ')'
+	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", q, td.Engine, td.Key)
 	if _, err := conn.Exec(qry); err != nil {
 		return err
 	}
@@ -791,6 +803,8 @@ func writeArray(el interface{}, char string) (line []byte) {
 func Export(rdr Input, wrtr Output, after int) error {
 
 	var data []Row
+	fds := rdr.TableSpec().FieldDefs
+	sep := string(wrtr.Separator())
 	for r := 0; ; r++ {
 		var err error
 		if data, _, err = rdr.Read(1, true); err != nil {
@@ -811,19 +825,22 @@ func Export(rdr Input, wrtr Output, after int) error {
 		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
 		line := make([]byte, 0)
 		for c := 0; c < len(data[0]); c++ {
-			char := string(wrtr.Separator())
-			if c == len(data[0])-1 {
-				char = string(wrtr.EOL())
-				if wrtr.EOL() == 0 {
-					char = ""
-				}
+			// if we don't keep this field, move on to next one
+			if fds[c].Drop {
+				continue
 			}
 			if reflect.ValueOf(data[0][c]).Kind() == reflect.Slice {
-				line = append(line, writeArray(data[0][c], char)...)
+				line = append(line, writeArray(data[0][c], sep)...)
 			} else {
-				line = append(line, writeElement(data[0][c], char)...)
+				line = append(line, writeElement(data[0][c], sep)...)
 			}
 		}
+		// replace last comma
+		char := byte(' ')
+		if wrtr.EOL() != 0 {
+			char = byte(wrtr.EOL())
+		}
+		line[len(line)-1] = char
 		// Now put the line to wrtr
 		if _, err = wrtr.Write(line); err != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
