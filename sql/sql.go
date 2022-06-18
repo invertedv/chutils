@@ -328,9 +328,11 @@ func (wtr *Writer) Insert() error {
 		return chutils.Wrapper(chutils.ErrSQL, "no table name")
 	}
 	qry := fmt.Sprintf("INSERT INTO %s VALUES", wtr.Table) + string(wtr.hold) + ")"
-	_, err := wtr.conn.Exec(qry)
-	err = wtr.Close()
-	return err
+	if _, err := wtr.conn.Exec(qry); err != nil {
+		wtr.Close()
+		return err
+	}
+	return wtr.Close()
 }
 
 // Close closes the work on the Values so far--that is, it empties the buffer.

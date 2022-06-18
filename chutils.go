@@ -773,13 +773,16 @@ func (td *TableDef) Check() error {
 
 // writeElement writes a single field with separator char
 func writeElement(el interface{}, char string) []byte {
+	if el == nil {
+		return []byte(fmt.Sprintf("array()%s", char))
+	}
 	switch v := el.(type) {
 	case string:
 		return []byte(fmt.Sprintf("'%s'%s", v, char))
 	case time.Time:
 		return []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))
 	case float64, float32:
-		return []byte(fmt.Sprintf("%0.2f%s", v, char))
+		return []byte(fmt.Sprintf("%v%s", v, char))
 	default:
 		return []byte(fmt.Sprintf("%v%s", v, char))
 	}
@@ -820,7 +823,6 @@ func Export(rdr Input, wrtr Output, after int) error {
 			if err != nil {
 				return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 			}
-			fmt.Println("done writing", time.Now())
 		}
 		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
 		line := make([]byte, 0)
