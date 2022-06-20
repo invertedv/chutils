@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/invertedv/chutils"
-	_ "github.com/mailru/go-clickhouse/v2"
+	//	_ "github.com/mailru/go-clickhouse/v2"
 	"github.com/stretchr/testify/assert"
 	"log"
 	"os"

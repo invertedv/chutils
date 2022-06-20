@@ -9,7 +9,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
 	"github.com/invertedv/chutils/file"
-	_ "github.com/mailru/go-clickhouse/v2"
+	//	_ "github.com/mailru/go-clickhouse/v2"
 	"github.com/stretchr/testify/assert"
 	"log"
 	"os"

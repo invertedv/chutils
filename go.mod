@@ -3,13 +3,12 @@ module github.com/invertedv/chutils
 go 1.18
 
 require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.0.14
 	github.com/DATA-DOG/go-sqlmock v1.5.0
-	github.com/mailru/go-clickhouse/v2 v2.0.0
 	github.com/stretchr/testify v1.7.1
 )
 
 require (
-	github.com/ClickHouse/clickhouse-go/v2 v2.0.14 // indirect
 	github.com/davecgh/go-spew v1.1.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/paulmach/orb v0.7.1 // indirect
