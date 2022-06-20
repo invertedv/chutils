@@ -1,4 +1,4 @@
-### package chutils
+## package chutils
 
 ClickHouse is an excellent database for analysis applications.  It's exceptionally fast and has super useful
 data structures (such as Nested Arrays).
