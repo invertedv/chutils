@@ -352,6 +352,7 @@ type Writer struct {
 	name      string           // name of the file being written to
 	separator rune             // separator is the field separator
 	eol       rune             // eol is the end-of-line character
+	text      string           // text is the text delimiter. Defaults to empty
 	conn      *chutils.Connect // Con is the ClickHouse connect info (needed for Insert)
 }
 
@@ -384,9 +385,14 @@ func (wtr *Writer) Separator() rune {
 	return wtr.separator
 }
 
+// Text returns the string delimiter
+func (wtr *Writer) Text() string {
+	return wtr.text
+}
+
 // NewWriter creates a new Writer instance
 func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator rune, eol rune, table string) *Writer {
-	return &Writer{f, table, name, separator, eol, con}
+	return &Writer{f, table, name, separator, eol, "", con}
 }
 
 // Wrtrs creates a slice of Writers suitable for chutils.Concur.  The file names are chosen randomly.

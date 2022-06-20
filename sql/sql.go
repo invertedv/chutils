@@ -297,7 +297,8 @@ func (rdr *Reader) Insert() error {
 type Writer struct {
 	Table     string           // Table is the output table
 	separator rune             // separator for values.  This is set to ','
-	eol       rune             // EOL. This is set to 0.
+	eol       rune             // eol. This is set to 0.
+	text      string           // text is the text qualifer: defaults to ' for ClickHouse
 	conn      *chutils.Connect // conn is the connector to ClickHouse
 	hold      []byte           // holds the Value statements as they are built.
 }
@@ -310,6 +311,11 @@ func (wtr *Writer) Write(b []byte) (n int, err error) {
 	}
 	wtr.hold = append(wtr.hold, b...)
 	return n, nil
+}
+
+// Text returns the string delimiter
+func (wtr *Writer) Text() string {
+	return wtr.text
 }
 
 // Separator returns a comma rune.  This method is needed by chutils.Export.
@@ -353,6 +359,7 @@ func NewWriter(table string, conn *chutils.Connect) *Writer {
 		conn:      conn,
 		hold:      append(make([]byte, 0), '('),
 		separator: ',',
+		text:      "'",
 		eol:       0,
 	}
 }

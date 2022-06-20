@@ -104,6 +104,7 @@ type Output interface {
 	Insert() error                     // Inserts into ClickHouse
 	Separator() rune                   // Separator returns the field separator
 	EOL() rune                         // EOL returns the End-of-line character
+	Text() string                      // Text is text qualifier for strings.  If it is found, Export doubles it. For ClickHouse, this is a single quote.
 	Close() error                      // Close writer
 }
 
@@ -771,13 +772,17 @@ func (td *TableDef) Check() error {
 	return nil
 }
 
-// writeElement writes a single field with separator char
-func writeElement(el interface{}, char string) []byte {
+// writeElement writes a single field with separator char. For strings, the text qualifier is sdelim.
+// If sdelim is found, it is doubled.
+func writeElement(el interface{}, char string, sdelim string) []byte {
 	if el == nil {
 		return []byte(fmt.Sprintf("array()%s", char))
 	}
 	switch v := el.(type) {
 	case string:
+		if strings.Contains(v, sdelim) {
+			return []byte(fmt.Sprintf("'%s'%s", strings.Replace(v, sdelim, sdelim+sdelim, -1), char))
+		}
 		return []byte(fmt.Sprintf("'%s'%s", v, char))
 	case time.Time:
 		return []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))
@@ -789,11 +794,11 @@ func writeElement(el interface{}, char string) []byte {
 }
 
 // writeArray writes a ClickHouse Array type. The format is "array(a1,a2,...)"
-func writeArray(el interface{}, char string) (line []byte) {
+func writeArray(el interface{}, char string, sdelim string) (line []byte) {
 	line = []byte("array(")
 	it := newIterator(el)
 	for it.Next() {
-		line = append(line, writeElement(it.Item, ",")...)
+		line = append(line, writeElement(it.Item, ",", sdelim)...)
 	}
 	line[len(line)-1] = ')'
 	line = append(line, char...)
@@ -831,10 +836,16 @@ func Export(rdr Input, wrtr Output, after int) error {
 			if fds[c].Drop {
 				continue
 			}
+			var l interface{}
+			if s, ok := l.(string); ok {
+				if strings.Contains(s, wrtr.Text()) {
+					l = strings.Replace(s, wrtr.Text(), wrtr.Text()+wrtr.Text(), -1)
+				}
+			}
 			if reflect.ValueOf(data[0][c]).Kind() == reflect.Slice {
-				line = append(line, writeArray(data[0][c], sep)...)
+				line = append(line, writeArray(data[0][c], sep, wrtr.Text())...)
 			} else {
-				line = append(line, writeElement(data[0][c], sep)...)
+				line = append(line, writeElement(data[0][c], sep, wrtr.Text())...)
 			}
 		}
 		// replace last comma
