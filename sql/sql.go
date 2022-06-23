@@ -55,7 +55,8 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 	return rdr.tableSpec
 }
 
-// Init initializes Reader.TableDef by looking at the output of the query
+// Init initializes Reader.TableDef by looking at the output of the query.
+// if key is empty, it defaults to the first field.
 func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 	var rows *sql.Rows
 	if rdr.Sql == "" {
@@ -142,7 +143,11 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 		}
 		fds[ind] = fd
 	}
-	//	rdr.tableSpec.FieldDefs = fds
+
+	//	if key is empty, make it the first field
+	if key == "" {
+		key = fds[0].Name
+	}
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 
 	return rdr.TableSpec().Check()

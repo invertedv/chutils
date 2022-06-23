@@ -137,6 +137,7 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 
 // Init initialize FieldDefs slice Reader.TableSpec() from header row of input.
 // It does not set any of the field types.
+// if key is empty, it defaults to the first field.
 func (rdr *Reader) Init(key string, engine chutils.EngineType) error {
 	if rdr.RowsRead != 0 {
 		if e := rdr.Reset(); e != nil {
@@ -163,7 +164,10 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) error {
 		}
 		fds[ind] = fd
 	}
-	//	rdr.tableSpec.FieldDefs = fds
+	//	if key is empty, make it the first field
+	if key == "" {
+		key = fds[0].Name
+	}
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 	return nil
 }
