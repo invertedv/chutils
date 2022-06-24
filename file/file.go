@@ -186,6 +186,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 			l += "\n"
 			err = nil
 		}
+		l = strings.Replace(l, "\r", "", -1)
 		// No quote string, so just split on Separator.
 		if rdr.Quote == 0 {
 			// drop EOL
