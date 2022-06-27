@@ -3,6 +3,7 @@
 //   - Be delimited or fixed-width
 //   - Have header rows or not
 //
+// Ctrl-R values in the files are ignored.
 package file
 
 import (
