@@ -4,9 +4,9 @@
 package str
 
 import (
+	"fmt"
 	"github.com/invertedv/chutils/file"
 	"github.com/xuri/excelize/v2"
-	"log"
 	"strings"
 )
 
@@ -40,28 +40,41 @@ func NewReader(s string, separator rune, eol rune, quote rune, width int, skip i
 // maxRead - max # rows to read
 func NewXlReader(xl *excelize.File, sheet string, rowS, rowE, colS, colE int, quote rune, skip int, maxRead int) *file.Reader {
 	if sheet == "" {
-		sheet = xl.GetSheetList()[0]
+		sheet = xl.GetSheetName(0)
 	}
-	r, _ := xl.Rows(sheet)
 	s := ""
-	rowNum := 0
-	for r.Next() {
-		cols, e := r.Columns()
-		if e != nil {
-			log.Fatalln(e)
-		}
-		if rowNum >= rowS && (rowNum <= rowE || rowE == 0) {
+	indr := 0
+	rx, _ := xl.Rows(sheet)
+	defer func() { _ = rx.Close() }()
+	for rx.Next() {
+		if indr >= rowS && (indr <= rowE || rowE == 0) {
 			line := make([]byte, 0)
-			for colNum, c := range cols {
-				if colNum >= colS && (colNum <= colE || colE == 0) {
-					line = append(line, []byte(c)...)
+			cx, _ := rx.Columns()
+			for indc := range cx {
+				if indc >= colS && (indc <= colE || colE == 0) {
+					cell := makeCol(indc, indr)
+					_ = xl.SetCellStyle(sheet, cell, cell, 0)
+					a, _ := xl.GetCellValue(sheet, cell)
+					line = append(line, []byte(a)...)
 					line = append(line, byte('\t'))
 				}
 			}
 			line[len(line)-1] = byte('\n')
 			s += string(line)
 		}
-		rowNum++
+		indr++
 	}
 	return NewReader(s, '\t', '\n', quote, 0, skip, maxRead)
+}
+
+// returns the Excel axis address for a cell (e.g. (0,0) -> "A1"
+func makeCol(col int, row int) string {
+	cols := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if col < len(cols) {
+		return string(cols[col]) + fmt.Sprintf("%d", row+1)
+	}
+	tens := col / 26
+	ones := col % 26
+	return string(cols[tens-1]) + string(cols[ones]) + fmt.Sprintf("%d", row+1)
+
 }
