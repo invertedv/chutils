@@ -59,7 +59,10 @@ func NewXlReader(xl *excelize.File, sheet string, rowS, rowE, colS, colE int, qu
 					line = append(line, byte('\t'))
 				}
 			}
-			line[len(line)-1] = byte('\n')
+			// handle blank row case
+			if len(line) >= 1 {
+				line[len(line)-1] = byte('\n')
+			}
 			s += string(line)
 		}
 		indr++
