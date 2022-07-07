@@ -319,7 +319,7 @@ func ExampleWriter_Write() {
 	}
 
 	wrtr := NewWriter(table, con)
-	if err := chutils.Export(rdr, wrtr, 0); err != nil {
+	if err := chutils.Export(rdr, wrtr, 0, false); err != nil {
 		log.Fatalln(err)
 	}
 	qry := fmt.Sprintf("SELECT * FROM %s", table)

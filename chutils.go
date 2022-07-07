@@ -808,7 +808,9 @@ func writeArray(el interface{}, char string, sdelim string) (line []byte) {
 // Export transfers the contents of rdr to wrtr.
 // if after == 0 then issues wrtr.Insert when it is done
 // if after > 0 then issues wrtr.Insert every 'after' lines (useful for sql Writers to prevent memory issues)
-func Export(rdr Input, wrtr Output, after int) error {
+// if after < 0, then the output isn't Inserted (for testing)
+// if ignore == true, the read errors are ignored
+func Export(rdr Input, wrtr Output, after int, ignore bool) error {
 
 	var data []Row
 	fds := rdr.TableSpec().FieldDefs
@@ -825,9 +827,12 @@ func Export(rdr Input, wrtr Output, after int) error {
 				}
 				return nil
 			}
-			if err != nil {
-				return Wrapper(ErrInput, fmt.Sprintf("%v", r))
+			if ignore {
+				continue
 			}
+			//if err != nil {
+			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
+			//}
 		}
 		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
 		line := make([]byte, 0)
@@ -890,7 +895,7 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
 	for ind := 0; ind < queueLen; ind++ {
 		ind := ind // Required since the function below is a closure
 		go func() {
-			c <- Export(rdrs[ind], wrtrs[ind], after)
+			c <- Export(rdrs[ind], wrtrs[ind], after, false)
 		}()
 		running++
 		if running == nWorker {
