@@ -4,10 +4,10 @@
 //
 // The Reader defined here implements chutils.Input.
 // Examples of usage:
-//  - Adding a field based on which input fields passed validation.
-//  - Adding additional fields calculated from the existing inputs.
-//  - Adding additional fields based on other variables using a function closure.
-//  - Modifying existing fields
+//   - Adding a field based on which input fields passed validation.
+//   - Adding additional fields calculated from the existing inputs.
+//   - Adding additional fields based on other variables using a function closure.
+//   - Modifying existing fields
 package nested
 
 import (
@@ -20,10 +20,11 @@ import (
 type NewCalcFn func(ts *chutils.TableDef, data chutils.Row, valid chutils.Valid, validatge bool) (interface{}, error)
 
 // Reader struc that implements chutils.Input.
-//  Note that r cannot be embedded because we need to have both r.Read and Reader.Read
+//
+//	Note that r cannot be embedded because we need to have both r.Read and Reader.Read
 type Reader struct {
 	r         chutils.Input     // Input before new fields
-	tableSpec *chutils.TableDef // tableSpec includes orginal and calculated fields
+	tableSpec *chutils.TableDef // tableSpec includes original and calculated fields
 	newCalcs  []NewCalcFn       // newCalcs is an array of functions to populate calculated fields
 }
 
