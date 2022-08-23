@@ -111,7 +111,7 @@ type Output interface {
 // Connect holds the ClickHouse connect information
 type Connect struct {
 	Host     string // Host is host IP
-	User     string // User is ClickHouse user name
+	User     string // User is ClickHouse username
 	Password string // Password is user's password
 	*sql.DB         // ClickHouse database connector
 }
@@ -121,7 +121,7 @@ type Connect struct {
 func NewConnect(host string, user string, password string, settings clickhouse.Settings) (con *Connect, err error) {
 	var db *sql.DB
 	err = nil
-	con = &Connect{host, user, password, db}
+	con = &Connect{Host: host, User: user, Password: password, DB: db}
 	con.DB = clickhouse.OpenDB(
 		&clickhouse.Options{
 			Addr: []string{host + ":9000"},
