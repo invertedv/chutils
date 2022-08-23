@@ -124,11 +124,19 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 
 	numLines = 0
 	for e := error(nil); e != io.EOF; {
-		if _, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
+		var d string
+		if d, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
 			if e != io.EOF {
 				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
-			numLines -= rdr.Skip
+			_ = d
+			if e == io.EOF {
+				numLines -= rdr.Skip
+				// last line doesn't end in \n
+				if d != "" {
+					numLines++
+				}
+			}
 			return
 		}
 		numLines++
@@ -258,6 +266,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 //   - The data is not validated.
 //   - The return slice valid is nil
 //   - The fields are returned as strings.
+//
 // err returns io.EOF at end of file
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 

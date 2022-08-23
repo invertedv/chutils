@@ -1,4 +1,6 @@
 ## package chutils
+[![Go Report Card](https://goreportcard.com/badge/github.com/invertedv/chutils)](https://goreportcard.com/report/github.com/invertedv/chutils)
+[![godoc](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/mod/github.com/invertedv/chutils?tab=overview)
 
 ClickHouse is an excellent database for analysis applications.  It's exceptionally fast and has super useful
 data structures (such as Nested Arrays).

@@ -1,24 +1,24 @@
 // Package chutils is a set of utilities designed to work with ClickHouse.
 // The utilities are designed to facilitate import and export of data.
 //
-//The chutils package facilitates these types of functions. The principal use cases are:
+// The chutils package facilitates these types of functions. The principal use cases are:
 //
 //  1. file --> ClickHouse
 //  2. ClickHouse --> file
 //  3. ClickHouse --> ClickHouse
 //
-//Why is use case 3 helpful?
-//  - Automatic generation of the CREATE TABLE statement
-//  - Data cleaning
-//  - Renaming fields
-//  - Adding fields that may be complex functions of the Input and/or use data from other Go variables.
+// Why is use case 3 helpful?
+//   - Automatic generation of the CREATE TABLE statement
+//   - Data cleaning
+//   - Renaming fields
+//   - Adding fields that may be complex functions of the Input and/or use data from other Go variables.
 //
-//The chutils package defines:
+// The chutils package defines:
 //   - An Input interface that reads data.
 //   - A TableDef struct that specifies the structure of the input. Features include:
-//       - The fields/types of a TableDef can be specified, or they can be imputed from the data.
-//       - The corresponding CREATE TABLE statement can be built and issued.
-//       - Checks of the range/values of fields as they are read.
+//   - The fields/types of a TableDef can be specified, or they can be imputed from the data.
+//   - The corresponding CREATE TABLE statement can be built and issued.
+//   - Checks of the range/values of fields as they are read.
 //   - An Output interface that writes data.
 //   - Concurrent execution of Input/Output interfaces
 //
@@ -27,39 +27,39 @@
 //
 // These two packages can be mixed and matched for Input/Output.
 //
-// Example uses
+// # Example uses
 //
-// 1. Load a CSV to ClickHouse -- Option 1 (see Example in package file)
-//    a. Define a file Reader to point to the CSV.
-//    b. Use Init to create the TableDef and then Impute to determine the fields and types.
-//    c. Use the Create method of TableDef to create the ClickHouse table to populate.
-//    d. Run TableSpecs().Check() to verify the TableSpec is set up correctly.
-//    e. Define a file Writer that points a temporary file.
-//    f. Use chutils Export to create a temporary file that uses the Reader/Writer.
-//    g. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
+//  1. Load a CSV to ClickHouse -- Option 1 (see Example in package file)
+//     a. Define a file Reader to point to the CSV.
+//     b. Use Init to create the TableDef and then Impute to determine the fields and types.
+//     c. Use the Create method of TableDef to create the ClickHouse table to populate.
+//     d. Run TableSpecs().Check() to verify the TableSpec is set up correctly.
+//     e. Define a file Writer that points a temporary file.
+//     f. Use chutils Export to create a temporary file that uses the Reader/Writer.
+//     g. Use the Writer Insert method to issue a command to clickhouse-client to load the temporary file.
 //
-// 2. Load a CSV to ClickHouse -- Option 2 (see Example in package sql).
-//    a. same as a, above.
-//    b. same as b, above.
-//    c. same as c, above.
-//    d. same as d, above.
-//    e. Define an SQL Writer that points to the table to populate.
-//    f. Use chutils Export to create a VALUES insert statement.
-//    g. Use the Writer Insert statement to execute the Insert.
+//  2. Load a CSV to ClickHouse -- Option 2 (see Example in package sql).
+//     a. same as a, above.
+//     b. same as b, above.
+//     c. same as c, above.
+//     d. same as d, above.
+//     e. Define an SQL Writer that points to the table to populate.
+//     f. Use chutils Export to create a VALUES insert statement.
+//     g. Use the Writer Insert statement to execute the Insert.
 //
-// 3. Insert to a ClickHouse table from a ClickHouse query -- Option 1.
-//    a. Define an sql Reader to define the source query.
-//    b. Use Init to define the TableDef and Create to create the output table.
-//    c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
-//    d. Use Insert to execute the insert query. (Note, there is no data validation).
+//  3. Insert to a ClickHouse table from a ClickHouse query -- Option 1.
+//     a. Define an sql Reader to define the source query.
+//     b. Use Init to define the TableDef and Create to create the output table.
+//     c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
+//     d. Use Insert to execute the insert query. (Note, there is no data validation).
 //
-// 4. Insert to a ClickHouse table from a ClickHouse query -- Option 2.
-//    a. Same as a, above.
-//    b. Same as b, above.
-//    c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
-//    d. Define an sql Writer that points to the table to populate.
-//    e. Use chutils Export to create the VALUEs statement that is used to insert into the table.
-//    f. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
+//  4. Insert to a ClickHouse table from a ClickHouse query -- Option 2.
+//     a. Same as a, above.
+//     b. Same as b, above.
+//     c. Run TableSpec().Check() to make sure the TableSpec is set up correctly.
+//     d. Define an sql Writer that points to the table to populate.
+//     e. Use chutils Export to create the VALUEs statement that is used to insert into the table.
+//     f. Use the Writer Insert statement to execute the Insert. (Note, there *is* data validation).
 package chutils
 
 import (
@@ -704,6 +704,31 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	return nil
 }
 
+func checkLen(fd *FieldDef) error {
+	if fd.ChSpec.Base != ChFloat && fd.ChSpec.Base != ChInt {
+		return nil
+	}
+	if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 {
+		return Wrapper(ErrFields,
+			fmt.Sprintf("Floats and Ints must have length 32 or 64, field %s", fd.Name))
+	}
+	return nil
+}
+
+func checkConst(fd *FieldDef, val interface{}) (ret interface{}, err error) {
+	if val == nil {
+		return nil, nil
+	}
+	var x interface{}
+	var ok bool
+	if x, ok = convert(val, fd.ChSpec); !ok {
+		return nil, Wrapper(ErrFields,
+			fmt.Sprintf("cannot coerce value %v to %v, field: %s", fd.Missing, val, fd.Name))
+	}
+	return x, nil
+
+}
+
 // Check verifies that the fields are of the type chutils supports.  Check also converts, if needed, the
 // Legal.HighLimit and Legal.LowLimit and Missing interfaces to the correct type and checks LowLimit <= HighLimit.
 // It's a good idea to run Check before reading the data.
@@ -724,43 +749,26 @@ func (td *TableDef) Check() error {
 				return Wrapper(ErrFields, fmt.Sprintf("FixedString must have a length, field: %s", fd.Name))
 			}
 		case ChFloat, ChInt, ChDate:
-			var x interface{}
-			var ok bool
-			if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 && (t == ChFloat || t == ChInt) {
-				return Wrapper(ErrFields,
-					fmt.Sprintf("Floats and Ints must have length 32 or 64, field %s", fd.Name))
+			if e := checkLen(fd); e != nil {
+				return e
 			}
-			if fd.Missing != nil {
-				if x, ok = convert(fd.Missing, fd.ChSpec); !ok {
-					return Wrapper(ErrFields,
-						fmt.Sprintf("cannot coerce Missing value %v to %v, field: %s", fd.Missing, t, fd.Name))
-				}
-				fd.Missing = x
+			v, e := checkConst(fd, fd.Missing)
+			if e != nil {
+				return e
 			}
-			if fd.Default != nil {
-				if x, ok = convert(fd.Default, fd.ChSpec); !ok {
-					return Wrapper(ErrFields,
-						fmt.Sprintf("cannot coerce Default value %v to %v, field: %s", fd.Default, t, fd.Name))
-				}
-				fd.Default = x
+			fd.Missing = v
+			v, e = checkConst(fd, fd.Default)
+			fd.Default = v
+			v, e = checkConst(fd, fd.Legal.HighLimit)
+			if e != nil {
+				return e
 			}
-			if fd.Legal.HighLimit == nil && fd.Legal.LowLimit == nil {
-				continue
+			fd.Legal.HighLimit = v
+			v, e = checkConst(fd, fd.Legal.LowLimit)
+			if e != nil {
+				return e
 			}
-			if x, ok = convert(fd.Legal.HighLimit, fd.ChSpec); !ok {
-				return Wrapper(ErrFields,
-					fmt.Sprintf("cannot coerce HighLimit %v to %v, field: %s", fd.Legal.HighLimit, t, fd.Name))
-			}
-			fd.Legal.HighLimit = x
-			if x, ok = convert(fd.Legal.LowLimit, fd.ChSpec); !ok {
-				return Wrapper(ErrFields,
-					fmt.Sprintf("cannot coerce LowLimit %v to %v, field: %s", fd.Legal.LowLimit, t, fd.Name))
-			}
-			fd.Legal.LowLimit = x
-			if fd.Missing == nil {
-				return Wrapper(ErrFields,
-					fmt.Sprintf("cannot have populated LowLimit/HighLimit and nil Missing, field: %s", fd.Name))
-			}
+			fd.Legal.LowLimit = v
 			if !compare(fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec) {
 				return Wrapper(ErrFields,
 					fmt.Sprintf("LowLimit %v >= HighLimit %v, field: %s", fd.Legal.LowLimit, fd.Legal.HighLimit, fd.Name))
@@ -830,9 +838,7 @@ func Export(rdr Input, wrtr Output, after int, ignore bool) error {
 			if ignore {
 				continue
 			}
-			//if err != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
-			//}
 		}
 		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
 		line := make([]byte, 0)
