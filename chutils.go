@@ -758,6 +758,9 @@ func (td *TableDef) Check() error {
 			}
 			fd.Missing = v
 			v, e = checkConst(fd, fd.Default)
+			if e != nil {
+				return e
+			}
 			fd.Default = v
 			v, e = checkConst(fd, fd.Legal.HighLimit)
 			if e != nil {

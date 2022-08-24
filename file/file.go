@@ -378,10 +378,12 @@ func (wtr *Writer) Insert() error {
 		cmd = fmt.Sprintf("%s --password=%s", cmd, wtr.conn.Password)
 	}
 	cmd = fmt.Sprintf("%s %s ", cmd, "")
+	cmd = fmt.Sprintf("%s --format_csv_allow_single_quotes=true", cmd)
 	cmd = fmt.Sprintf("%s --format_csv_delimiter='%s'", cmd, string(wtr.Separator()))
 	cmd = fmt.Sprintf("%s --query 'INSERT INTO %s FORMAT %s' < %s", cmd, wtr.Table, "CSV", wtr.Name())
 	// running clickhouse-client as a command bc issuing the command itself chokes on --query element
 	c := exec.Command("bash", "-c", cmd)
+
 	return c.Run()
 }
 

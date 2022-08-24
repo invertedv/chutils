@@ -152,16 +152,13 @@ func TestReader_Read(t *testing.T) {
 
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
-		if e := rt1.Init("a", chutils.MergeTree); e != nil {
-			t.Errorf("unexpected Init error, case %d", j)
-			break
-		}
-		if _, e := rt.Seek(0, 0); e != nil {
-			t.Errorf("unexpected Seek error")
-		}
-		if e := rt1.Seek(row[j]); e != nil {
-			log.Fatalln(e)
-		}
+		e := rt1.Init("a", chutils.MergeTree)
+		assert.Nil(t, e)
+		_, e = rt.Seek(0, 0)
+		assert.Nil(t, e)
+		e = rt1.Seek(row[j])
+		assert.Nil(t, e)
+
 		d, _, e := rt1.Read(1, false)
 		if e != nil {
 			if errors.Unwrap(e).(chutils.ErrType) == chutils.ErrFieldCount {
@@ -172,10 +169,11 @@ func TestReader_Read(t *testing.T) {
 			t.Errorf("unexpected read error case %d", j)
 			continue
 		}
-		if d[0][col[j]] != result[j] {
-			t.Errorf("case %d element should be %v but got %v", j, result[j], d[0][0])
-		}
+		assert.Equal(t, d[0][col[j]], result[j])
 	}
+}
+
+func TestReader_Read3(t *testing.T) {
 
 	// Test type conversions, HighLimit/LowLimit/levels legal values
 
@@ -199,7 +197,7 @@ func TestReader_Read(t *testing.T) {
 	levels := [][]string{nil, nil, nil, mp, nil, nil, nil, nil, nil, mp1}
 
 	// test values
-	col = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
+	col := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 3, 9}
 	dt, _ := time.Parse("2006-01-02", "2000-01-03")
 	result1 := []interface{}{dt, 3.4, "A", "BD", int64(42), dtmiss, "!", -1.0, dtmiss, "X"}
 
@@ -210,10 +208,7 @@ func TestReader_Read(t *testing.T) {
 	}
 	for j := 0; j < len(field); j++ {
 		_, fd, e := rt1.TableSpec().Get(field[j])
-		if e != nil {
-			t.Errorf("unexpected Get error, field: %s", field[j])
-			return
-		}
+		assert.Nil(t, e)
 		fd.ChSpec.Base = base[j]
 		fd.ChSpec.Length = length[j]
 		fd.ChSpec.Format = datefmt[j]
@@ -236,30 +231,19 @@ func TestReader_Read(t *testing.T) {
 	}
 	// read the row
 	d, _, e := rt1.Read(1, true)
-	if e != nil {
-		t.Errorf("unexpected error reading type check case")
-		return
-	}
+	assert.Nil(t, e)
 	// check output
 	for j := 0; j < len(field); j++ {
 		val := d[0][col[j]]
 		switch base[j] {
 		case chutils.ChFloat:
-			if val.(float64) != result1[j].(float64) {
-				t.Errorf("Type test, expected %v got %v", result1[j], val)
-			}
+			assert.Equal(t, val.(float64), result1[j].(float64))
 		case chutils.ChDate:
-			if val.(time.Time) != result1[j].(time.Time) {
-				t.Errorf("Type test, expected %v got %v", result1[j], val)
-			}
+			assert.Equal(t, val.(time.Time), result1[j].(time.Time))
 		case chutils.ChInt:
-			if val.(int64) != result1[j].(int64) {
-				t.Errorf("Type test, expected %v got %v", result1[j], val)
-			}
+			assert.Equal(t, val.(int64), result1[j].(int64))
 		case chutils.ChFixedString:
-			if val.(string) != result1[j].(string) {
-				t.Errorf("Type test, expected %v got %v", result1[j], val)
-			}
+			assert.Equal(t, val.(string), result1[j].(string))
 		}
 	}
 }
@@ -383,17 +367,15 @@ func ExampleReader_Read_cSV() {
 	*/
 
 	const inFile = "/home/will/tmp/zip_data.csv" // source data
-	const tmpFile = "/home/will/tmp/tmp.csv"     // temp file to write data to for import
 	const table = "testing.values"               // ClickHouse destination table
+	tmpFile := os.TempDir() + "/tmp.csv"         // temp file to write data to for import
 	var con *chutils.Connect
 	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer func() {
-		if con.Close() != nil {
-			log.Fatalln(err)
-		}
+		_ = con.Close()
 	}()
 	f, err := os.Open(inFile)
 	if err != nil {
@@ -401,9 +383,7 @@ func ExampleReader_Read_cSV() {
 	}
 	rdr := NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
 	defer func() {
-		if rdr.Close() != nil {
-			log.Fatalln(err)
-		}
+		_ = rdr.Close()
 	}()
 	if e := rdr.Init("id", chutils.MergeTree); e != nil {
 		log.Fatalln(err)
@@ -448,14 +428,10 @@ func ExampleReader_Read_cSV() {
 		log.Fatalln(err)
 	}
 	defer func() {
-		if fx.Close() != nil {
-			log.Fatalln(err)
-		}
+		_ = fx.Close()
 	}()
 	defer func() {
-		if os.Remove(tmpFile) != nil {
-			log.Fatalln(err)
-		}
+		_ = os.Remove(tmpFile)
 	}()
 	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
 	if err := chutils.Export(rdr, wrtr, 0, false); err != nil {
@@ -467,9 +443,7 @@ func ExampleReader_Read_cSV() {
 		log.Fatalln(err)
 	}
 	defer func() {
-		if res.Close() != nil {
-			log.Fatalln(err)
-		}
+		_ = res.Close()
 	}()
 	for res.Next() {
 		var (
