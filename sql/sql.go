@@ -3,6 +3,7 @@
 // ClickHouse CREATE MATERIALIZED VIEW statement but there is no trigger to update the output table if the input changes.
 //
 // There are three approaches to creating a new ClickHouse table:
+//
 //   - Direct ClickHouse insertion.  Use sql Reader.Insert to issue an Insert query with Reader.Sql as the source.
 //
 //   - Values insertion. Use sql Writer.Insert to issue an Insert query using VALUES. The values are created by
@@ -182,10 +183,17 @@ func typer(inType string) (ii interface{}) {
 // If validation == false:
 //   - data is returned with the fields appropriately typed.
 //   - The return slice valid is nil
+//
 // err is io.EOF at the end of the record set
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
 	data = nil
 	valid = nil
+	if nTarget == 0 {
+		nTarget, err = rdr.CountLines()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if rdr.TableSpec() == nil {
 		return nil, nil, chutils.Wrapper(chutils.ErrFields, "must run Init before read")
 	}
