@@ -783,9 +783,9 @@ func (td *TableDef) Check() error {
 	return nil
 }
 
-// writeElement writes a single field with separator char. For strings, the text qualifier is sdelim.
+// WriteElement writes a single field with separator char. For strings, the text qualifier is sdelim.
 // If sdelim is found, it is doubled.
-func writeElement(el interface{}, char string, sdelim string) []byte {
+func WriteElement(el interface{}, char string, sdelim string) []byte {
 	if el == nil {
 		return []byte(fmt.Sprintf("array()%s", char))
 	}
@@ -804,12 +804,12 @@ func writeElement(el interface{}, char string, sdelim string) []byte {
 	}
 }
 
-// writeArray writes a ClickHouse Array type. The format is "array(a1,a2,...)"
-func writeArray(el interface{}, char string, sdelim string) (line []byte) {
+// WriteArray writes a ClickHouse Array type. The format is "array(a1,a2,...)"
+func WriteArray(el interface{}, char string, sdelim string) (line []byte) {
 	line = []byte("array(")
 	it := newIterator(el)
 	for it.Next() {
-		line = append(line, writeElement(it.Item, ",", sdelim)...)
+		line = append(line, WriteElement(it.Item, ",", sdelim)...)
 	}
 	line[len(line)-1] = ')'
 	line = append(line, char...)
@@ -857,9 +857,9 @@ func Export(rdr Input, wrtr Output, after int, ignore bool) error {
 				}
 			}
 			if reflect.ValueOf(data[0][c]).Kind() == reflect.Slice {
-				line = append(line, writeArray(data[0][c], sep, wrtr.Text())...)
+				line = append(line, WriteArray(data[0][c], sep, wrtr.Text())...)
 			} else {
-				line = append(line, writeElement(data[0][c], sep, wrtr.Text())...)
+				line = append(line, WriteElement(data[0][c], sep, wrtr.Text())...)
 			}
 		}
 		// replace last comma
