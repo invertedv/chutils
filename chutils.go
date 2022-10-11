@@ -762,6 +762,10 @@ func (td *TableDef) Check() error {
 				return e
 			}
 			fd.Default = v
+			if fd.Legal == nil {
+				fd.Legal = &LegalValues{}
+				continue
+			}
 			v, e = checkConst(fd, fd.Legal.HighLimit)
 			if e != nil {
 				return e
