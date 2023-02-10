@@ -134,6 +134,7 @@ func NewConnect(host string, user string, password string, settings clickhouse.S
 			DialTimeout: 5 * time.Second,
 			Compression: &clickhouse.Compression{
 				clickhouse.CompressionLZ4,
+				0,
 			},
 		})
 	return con, con.DB.Ping()
