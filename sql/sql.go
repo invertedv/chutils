@@ -17,6 +17,7 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"github.com/invertedv/chutils"
@@ -302,7 +303,10 @@ func (rdr *Reader) Insert() error {
 		return chutils.Wrapper(chutils.ErrSQL, "Reader Name field is empty")
 	}
 	qry := fmt.Sprintf("INSERT INTO %s %s", rdr.Name, rdr.Sql)
-	_, err := rdr.conn.Exec(qry)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Minute)
+	defer cancel()
+
+	_, err := rdr.conn.ExecContext(ctx, qry)
 	return err
 }
 

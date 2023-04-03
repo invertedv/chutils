@@ -130,8 +130,8 @@ func NewConnect(host string, user string, password string, settings clickhouse.S
 				Username: user,
 				Password: password,
 			},
-			Settings: settings,
-			//			DialTimeout: 30 * time.Second,
+			Settings:    settings,
+			DialTimeout: 300 * time.Second,
 			Compression: &clickhouse.Compression{
 				clickhouse.CompressionLZ4,
 				0,
