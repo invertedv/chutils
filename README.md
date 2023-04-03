@@ -36,7 +36,7 @@ Features include:
 **Writing Data**
 - Creation of text files
 - Creation of ClickHouse tables via three routes:
-    - from textfiles using clickhouse-client (package file)
+    - from text files using clickhouse-client (package file)
     - from VALUES statements built with sql.Writer
     - from SQL directly using sql.Reader
 

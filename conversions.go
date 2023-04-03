@@ -7,18 +7,23 @@ import (
 	"time"
 )
 
+const (
+	bit64 = 64
+	bit32 = 32
+)
+
 // Convert converts the type of inValue to the type specified by fd.
 // returns the converted value and a boolean == true if successful.
 func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 	switch fd.Base {
 	case ChFloat:
 		switch fd.Length {
-		case 64:
+		case bit64:
 			funcs := []func(x any) (float64, bool){f64f64, f32f64, strf64, int32f64, int64f64, datef64, intf64}
 			if ind, ok := kindIndex(inValue); ok {
 				return funcs[ind](inValue)
 			}
-		case 32:
+		case bit32:
 			funcs := []func(x any) (float32, bool){f64f32, f32f32, strf32, int32f32, int64f32, datef32, intf32}
 			if ind, ok := kindIndex(inValue); ok {
 				return funcs[ind](inValue)
@@ -26,12 +31,12 @@ func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 		}
 	case ChInt:
 		switch fd.Length {
-		case 64:
+		case bit64:
 			funcs := []func(x any) (int64, bool){f64int64, f32int64, strint64, int32int64, int64int64, dateint64, intint64}
 			if ind, ok := kindIndex(inValue); ok {
 				return funcs[ind](inValue)
 			}
-		case 32:
+		case bit32:
 			funcs := []func(x any) (int32, bool){f64int32, f32int32, strint32, int32int32, int64int32, dateint32, intint32}
 			if ind, ok := kindIndex(inValue); ok {
 				return funcs[ind](inValue)
@@ -56,6 +61,7 @@ func convert(inValue interface{}, fd ChField) (interface{}, bool) {
 func kindIndex(inValue any) (int, bool) {
 	vo := reflect.ValueOf(inValue)
 	vr := vo.Kind()
+
 	switch vr {
 	case reflect.Float64:
 		return 0, true
@@ -75,6 +81,7 @@ func kindIndex(inValue any) (int, bool) {
 			return 5, true
 		}
 	}
+
 	return -1, false
 }
 
@@ -216,67 +223,63 @@ func (i *iterator) Append(v interface{}) {
 // Next populates Iterator.item to the next element of the array as an interface{}. Returns false if there are no more elements.
 func (i *iterator) Next() bool {
 	i.Item = nil
-	switch i.data.(type) {
+	switch v := i.data.(type) {
 	case []float32:
-		v := i.data.([]float32)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	case []float64:
-		v := i.data.([]float64)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	case []int32:
-		v := i.data.([]int32)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	case []int64:
-		v := i.data.([]int64)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	case []time.Time:
-		v := i.data.([]time.Time)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	case []string:
-		v := i.data.([]string)
 		if i.ind == len(v) {
 			return false
 		}
 		i.Item = v[i.ind]
 	}
+
 	i.ind++
+
 	return true
 }
 
 // Compare compares the values of two fields that are stored as interface{}
 // returns true if left >= right
-func compare(left interface{}, right interface{}, ch ChField) bool {
+func compare(left, right interface{}, ch ChField) bool {
 	if left == nil || right == nil {
 		return true
 	}
 	switch ch.Base {
 	case ChFloat:
 		switch ch.Length {
-		case 32:
+		case bit32:
 			return left.(float32) >= right.(float32)
-		case 64:
+		case bit64:
 			return left.(float64) >= right.(float64)
 		}
 	case ChInt:
 		switch ch.Length {
-		case 32:
+		case bit32:
 			return left.(int32) >= right.(int32)
-		case 64:
+		case bit64:
 			return left.(int64) >= right.(int64)
 		}
 	case ChDate:

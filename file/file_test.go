@@ -3,15 +3,17 @@ package file
 import (
 	"errors"
 	"fmt"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/invertedv/chutils"
-	//	_ "github.com/mailru/go-clickhouse/v2"
-	"github.com/stretchr/testify/assert"
+
 	"log"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type rstr struct{ strings.Reader }
@@ -72,7 +74,7 @@ func TestReader_Reset(t *testing.T) {
 			break
 		}
 
-		if _, _, e := rt1.Read(readcnt[j], false); e != nil {
+		if _, _, ex := rt1.Read(readcnt[j], false); ex != nil {
 			t.Errorf("unexpected read error on case %d", j)
 			break
 		}
@@ -114,27 +116,30 @@ func TestReader_Init(t *testing.T) {
 }
 
 func TestReader_CountLines(t *testing.T) {
-	input := []string{"a,b,c\n \"hello, mom\", 3, \"now, now\"\n,1,2,3",
+	input := []string{"a,b,c\n \"hello, mom\", 3, \"now, now\"\n1,2,3",
 		"a,b\n1,2\n2,3\n",
 		"a,b\n1,2\n2,3",
-		"a,b,c\n1,2\n",
-		"a,b,c\n\"\", , 3\n,\"hi\",2,3\n\"abc\", 33, 22"}
+		"a,b,c\n1,2,3",
+		"a,b,c\n\"\", , 3\n\"hi\",2,3\n\"abc\", 33, 22"}
 	result := []int{2, 2, 2, 1, 3}
 	quote := []rune{'"', '"', 0, '"', '"'}
-	for j := 0; j < len(result); j++ {
 
+	for j := 0; j < len(result); j++ {
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
 		if e := rt1.Init("a", chutils.MergeTree); e != nil {
 			t.Errorf("unexpected Init error, case %d", j)
 			break
 		}
-		rt1.TableSpec().Impute(rt1, 0, .9)
+
+		ex := rt1.TableSpec().Impute(rt1, 0, .9)
+		assert.Nil(t, ex)
+
 		ct, e := rt1.CountLines()
+
 		assert.Nil(t, e)
 		assert.Equal(t, ct, result[j])
 	}
-
 }
 
 func TestReader_Read(t *testing.T) {
@@ -149,7 +154,6 @@ func TestReader_Read(t *testing.T) {
 	quote := []rune{'"', '"', 0, '"', '"'}
 	result := []string{"hello, mom", "1", "3", "ErrFieldCount", ""}
 	for j := 0; j < len(result); j++ {
-
 		rt := &rstr{*strings.NewReader(input[j])}
 		rt1 := NewReader("abc", ',', '\n', quote[j], 0, 1, 0, rt, 0)
 		e := rt1.Init("a", chutils.MergeTree)
@@ -302,7 +306,6 @@ func TestWriter_Export(t *testing.T) {
 	input := []string{"a,b\n1,2\n3,4\n5,6\n7,8\n9,19\n"}
 
 	result := "'1','2'\n'3','4'\n'5','6'\n'7','8'\n'9','19'\n"
-	//	result := "1,2\n3,4\n5,6\n7,8\n9,19\n"
 
 	rt := &rstr{*strings.NewReader(input[0])}
 	rt1 := NewReader("abc", ',', '\n', 0, 0, 1, 0, rt, 0)
@@ -462,5 +465,4 @@ func ExampleReader_Read_cSV() {
 	//1X88 43210 19.2
 	//1r99 94043 -1
 	//1x09 00000 9.9
-
 }

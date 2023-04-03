@@ -63,9 +63,9 @@
 package chutils
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2"
 	"io"
 	"math"
 	"reflect"
@@ -73,13 +73,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
 // Missing values used when the user does not supply them
 var (
 	DateMissing   = time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)
-	IntMissing    = -1   //math.MaxInt32
-	FloatMissing  = -1.0 //math.MaxFloat64
+	IntMissing    = -1
+	FloatMissing  = -1.0
 	StringMissing = "!"
 )
 
@@ -87,7 +89,7 @@ var (
 var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
 	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", time.RFC3339}
 
-// The Input interface specifies the requirments for reading source data.
+// The Input interface specifies the requirements for reading source data.
 type Input interface {
 	Read(nTarget int, validate bool) (data []Row, valid []Valid, err error) // Read from the Input, possibly with validation
 	Reset() error                                                           // Reset to beginning of source
@@ -104,24 +106,50 @@ type Output interface {
 	Insert() error                     // Inserts into ClickHouse
 	Separator() rune                   // Separator returns the field separator
 	EOL() rune                         // EOL returns the End-of-line character
-	Text() string                      // Text is text qualifier for strings.  If it is found, Export doubles it. For ClickHouse, this is a single quote.
+	Text() string                      // Text is text qualifier for strings.  If it is found, Export doubles it. For CH, this is a single quote.
 	Close() error                      // Close writer
 }
 
 // Connect holds the ClickHouse connect information
 type Connect struct {
-	Host     string // Host is host IP
-	User     string // User is ClickHouse username
-	Password string // Password is user's password
-	*sql.DB         // ClickHouse database connector
+	Host     string        // Host is host IP
+	User     string        // User is ClickHouse username
+	Password string        // Password is user's password
+	timeOut  time.Duration // optional timeout parameter
+	*sql.DB                // ClickHouse database connector
+}
+
+// Execute executes qry with timeOut (if supplied), otherwise uses .Exec
+func (conn *Connect) Execute(qry string) error {
+	if conn.timeOut == 0 {
+		_, err := conn.Exec(qry)
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), conn.timeOut*time.Minute)
+	defer cancel()
+
+	_, err := conn.ExecContext(ctx, qry)
+
+	return err
+}
+
+// ConnectOpt is the type of function to set options for Connect
+type ConnectOpt func(conn *Connect)
+
+func WithTimeOut(timeOutMinutes int64) ConnectOpt {
+	fn := func(conn *Connect) {
+		conn.timeOut = time.Duration(timeOutMinutes)
+	}
+
+	return fn
 }
 
 // NewConnect established a new connection to ClickHouse.
 // host is IP address (assumes port 9000), memory is max_memory_usage
-func NewConnect(host string, user string, password string, settings clickhouse.Settings) (con *Connect, err error) {
+func NewConnect(host, user, password string, settings clickhouse.Settings, opts ...ConnectOpt) (con *Connect, err error) {
 	var db *sql.DB
-	err = nil
-	con = &Connect{Host: host, User: user, Password: password, DB: db}
+	con = &Connect{Host: host, User: user, Password: password, DB: db, timeOut: 0}
 	con.DB = clickhouse.OpenDB(
 		&clickhouse.Options{
 			Addr: []string{host + ":9000"},
@@ -133,10 +161,15 @@ func NewConnect(host string, user string, password string, settings clickhouse.S
 			Settings:    settings,
 			DialTimeout: 300 * time.Second,
 			Compression: &clickhouse.Compression{
-				clickhouse.CompressionLZ4,
-				0,
+				Method: clickhouse.CompressionLZ4,
+				Level:  0,
 			},
 		})
+
+	for _, opt := range opts {
+		opt(con)
+	}
+
 	return con, con.DB.Ping()
 }
 
@@ -278,13 +311,12 @@ func (ch ChField) String() string {
 		chf = "error"
 	}
 	return ret + chf + cls
-
 }
 
 // Converter method converts an arbitrary value to the ClickHouse type requested.
 // Returns the value and a boolean indicating whether this was successful.
 // If the conversion is unsuccessful, the return value is "missing"
-func (ch ChField) Converter(inValue interface{}, missing interface{}, deflt interface{}) (interface{}, Status) {
+func (ch ChField) Converter(inValue, missing, deflt interface{}) (interface{}, Status) {
 	// if there is a default value, see if we need it
 	if deflt != nil {
 		if inValue == nil {
@@ -297,10 +329,12 @@ func (ch ChField) Converter(inValue interface{}, missing interface{}, deflt inte
 			}
 		}
 	}
+
 	outValue, ok := convert(inValue, ch)
 	if !ok {
 		return missing, VTypeFail
 	}
+
 	return outValue, VPass
 }
 
@@ -317,39 +351,10 @@ func NewLegalValues() *LegalValues {
 	return &LegalValues{Levels: x}
 }
 
-// CheckRange checks whether checkVal is a legal value. Returns fd.Missing, if not.
-func (fd *FieldDef) CheckRange(checkVal interface{}) (interface{}, Status) {
-
-	switch val := checkVal.(type) {
-	case string:
-		if fd.ChSpec.Base == ChFixedString {
-			if len(val) > fd.ChSpec.Length {
-				return fd.Missing, VTypeFail
-			}
-		}
-		// nothing to do?
-		if fd.Legal.Levels == nil || len(fd.Legal.Levels) == 0 {
-			return checkVal, VPass
-		}
-		// check if this is supposed to be a numeric field.
-		for _, rx := range fd.Legal.Levels {
-			if val == rx {
-				return checkVal, VPass
-			}
-		}
-	default:
-		if compare(checkVal, fd.Legal.LowLimit, fd.ChSpec) && compare(fd.Legal.HighLimit, checkVal, fd.ChSpec) {
-			return checkVal, VPass
-		}
-	}
-	return fd.Missing, VValueFail
-}
-
 // FindType determines the ChType of newVal.  If the target type is already set, this is a noop.
 // Otherwise, the order of precedence is: ChDate, ChInt, ChFloat, ChString.
 // If it is a date, the date format is set in target.
 func FindType(newVal string, target *ChField) (res ChType) {
-
 	// if target != Unknown, then don't try anything
 	res = target.Base
 
@@ -358,21 +363,25 @@ func FindType(newVal string, target *ChField) (res ChType) {
 	if res == ChUnknown {
 		// Assign to string first -- this always works
 		res = ChString
+
 		// float ?
 		if _, err := strconv.ParseFloat(newVal, 64); err == nil {
 			res = ChFloat
 		}
+
 		// int ?
 		if _, err := strconv.ParseInt(newVal, 10, 64); err == nil {
 			res = ChInt
 		}
+
 		// date?
 		if dfmt, _, err := findFormat(newVal); err == nil {
 			target.Format = dfmt
 			res = ChDate
 		}
 	}
-	return
+
+	return res
 }
 
 // Row is single row of the table.  The fields may be of any type.
@@ -421,13 +430,40 @@ func NewFieldDef(name string, chSpec ChField, description string, legal *LegalVa
 	return fd
 }
 
+// CheckRange checks whether checkVal is a legal value. Returns fd.Missing, if not.
+func (fd *FieldDef) CheckRange(checkVal interface{}) (interface{}, Status) {
+	switch val := checkVal.(type) {
+	case string:
+		if fd.ChSpec.Base == ChFixedString {
+			if len(val) > fd.ChSpec.Length {
+				return fd.Missing, VTypeFail
+			}
+		}
+		// nothing to do?
+		if fd.Legal.Levels == nil || len(fd.Legal.Levels) == 0 {
+			return checkVal, VPass
+		}
+		// check if this is supposed to be a numeric field.
+		for _, rx := range fd.Legal.Levels {
+			if val == rx {
+				return checkVal, VPass
+			}
+		}
+	default:
+		if compare(checkVal, fd.Legal.LowLimit, fd.ChSpec) && compare(fd.Legal.HighLimit, checkVal, fd.ChSpec) {
+			return checkVal, VPass
+		}
+	}
+	return fd.Missing, VValueFail
+}
+
 // Validator checks the value of the field (inValue) against its FieldDef.
 // outValue is the inValue that has the correct type. It is set to its fd.Missing if the Validation fails.
 func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status Status) {
-
 	if reflect.ValueOf(inValue).Kind() == reflect.Slice {
 		statusTotal := VPass
 		it := newIterator(inValue)
+
 		for it.Next() {
 			ov, stat := fd.Validator(it.Item)
 			it.Append(ov)
@@ -435,6 +471,7 @@ func (fd *FieldDef) Validator(inValue interface{}) (outVal interface{}, status S
 				statusTotal = VValueFail
 			}
 		}
+
 		return it.NewItems, statusTotal
 	}
 
@@ -462,39 +499,44 @@ func NewTableDef(key string, engine EngineType, fielddefs map[int]*FieldDef) *Ta
 		FieldDefs: fielddefs,
 		nested:    nil,
 	}
-	return td
 
+	return td
 }
 
 // Nest defines a set of fields in [field1, field2] as being nested with name nestName
-func (td *TableDef) Nest(nestName string, firstField string, lastField string) error {
+func (td *TableDef) Nest(nestName, firstField, lastField string) error {
 	_, ok := td.nested[nestName]
 	if ok {
 		return Wrapper(ErrFields, fmt.Sprintf("nested name %s already exists", nestName))
 	}
+
 	if firstField == lastField {
 		return Wrapper(ErrFields, "nests must have at least two fields")
 	}
+
 	ind1, _, err := td.Get(firstField)
 	if err != nil {
 		return err
 	}
+
 	ind2, _, err := td.Get(lastField)
 	if err != nil {
 		return err
 	}
+
 	if ind2 < ind1 {
-		tmp := ind1
-		ind1 = ind2
-		ind2 = tmp
+		ind1, ind2 = ind2, ind1
 	}
+
 	// check all nested fields are arrays and remove array outer function -- it is implied for nested fields
 	for ind := ind1; ind <= ind2; ind++ {
 		fd := td.FieldDefs[ind]
 		if !fd.ChSpec.Funcs.Has(OuterArray) {
 			return Wrapper(ErrFields, fmt.Sprintf("field %s must be an array to be nested", fd.Name))
 		}
+
 		var newOuter OuterFuncs = nil
+
 		for _, fn := range fd.ChSpec.Funcs {
 			if fn != OuterArray {
 				newOuter = append(newOuter, fn)
@@ -502,6 +544,7 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 		}
 		fd.ChSpec.Funcs = newOuter
 	}
+
 	if td.nested != nil {
 		for k, v := range td.nested {
 			if v[1] >= ind1 && v[0] <= ind2 {
@@ -509,15 +552,18 @@ func (td *TableDef) Nest(nestName string, firstField string, lastField string) e
 			}
 		}
 	}
+
 	if td.nested == nil {
 		td.nested = make(map[string][2]int)
 	}
+
 	td.nested[nestName] = [2]int{ind1, ind2}
+
 	return nil
 }
 
 // isNested returns the nest name for the first field in the nest and ")" for the last field
-func (td *TableDef) isNested(ind int) (start string, end string) {
+func (td *TableDef) isNested(ind int) (start, end string) {
 	for k, v := range td.nested {
 		if ind == v[0] {
 			return k, "" // fmt.Sprintf("%s Nested(\n", k), ""
@@ -526,6 +572,7 @@ func (td *TableDef) isNested(ind int) (start string, end string) {
 			return "", ")"
 		}
 	}
+
 	return "", ""
 }
 
@@ -537,29 +584,30 @@ func (td *TableDef) Get(name string) (int, *FieldDef, error) {
 			return ind, fdx, nil
 		}
 	}
+
 	return 0, nil, Wrapper(ErrFields, name)
 }
 
 // findFormat determines the date format for a date represented as a string.
 func findFormat(inDate string) (format string, date time.Time, err error) {
-	format = ""
 	for _, format = range DateFormats {
 		date, err = time.Parse(format, inDate)
 		if err == nil {
 			return
 		}
 	}
+
 	return "", DateMissing, Wrapper(ErrDateFormat, inDate)
 }
 
 // Impute looks at the data from Input reader and builds the FieldDefs.
 // It expects each field in rdr to come in as string.
 func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error) {
-	err = nil
 	if err = rdr.Reset(); err != nil {
 		return
 	}
 	defer func() { _ = rdr.Reset() }()
+
 	// countType keeps track of the field values as the file is read
 	type countType struct {
 		floats int
@@ -567,11 +615,14 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 		dates  int
 		legal  *LegalValues
 	}
+
 	counts := make([]*countType, 0)
+
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
 		ct := &countType{legal: NewLegalValues()}
 		counts = append(counts, ct)
 	}
+
 	numFields := len(td.FieldDefs)
 
 	// Look at RowsToExamine rows to see what types we have.
@@ -582,6 +633,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 		if errx == io.EOF {
 			break
 		}
+
 		if errx != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("error reading row %d", rowCount))
 		}
@@ -590,9 +642,11 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 				fval string
 				ok   bool
 			)
+
 			if fval, ok = data[0][ind].(string); !ok {
 				return Wrapper(ErrStr, fmt.Sprintf("%v %v", fval, rowCount))
 			}
+
 			// aggregate results for each field across the rows
 			switch FindType(fval, &td.FieldDefs[ind].ChSpec) {
 			case ChInt:
@@ -611,6 +665,7 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 	// Select field type.
 	for ind := 0; ind < numFields; ind++ {
 		fd := td.FieldDefs[ind]
+
 		// only impute type if user has not specified it
 		if fd.ChSpec.Base == ChUnknown {
 			switch {
@@ -636,7 +691,6 @@ func (td *TableDef) Impute(rdr Input, rowsToExamine int, tol float64) (err error
 
 // Create builds and issues CREATE TABLE ClickHouse statement. The table created is "table"
 func (td *TableDef) Create(conn *Connect, table string) error {
-
 	// drop table if it exists
 	qry := fmt.Sprintf("DROP TABLE IF EXISTS %v", table)
 	if _, err := conn.Exec(qry); err != nil {
@@ -653,14 +707,7 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 	currentNest := ""
 
 	// remove any dropped fields
-	//	fds := make([]*FieldDef, 0)
-	//	for ind := 0; ind < len(td.FieldDefs); ind++ {
-	//		if !td.FieldDefs[ind].Drop {
-	//			fds = append(fds, td.FieldDefs[ind])
-	//		}
-	//	}
 	for ind := 0; ind < len(td.FieldDefs); ind++ {
-
 		fd := td.FieldDefs[ind]
 		if fd.Drop {
 			continue
@@ -668,12 +715,15 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 
 		nestName, nestEnd := td.isNested(ind)
 		nestStr := ""
+
 		if nestName != "" {
 			nestStr = fmt.Sprintf("%s Nested(\n", nestName)
 			currentNest = nestName
 		}
+
 		isNested = isNested || (nestName != "")
 		ftype := fmt.Sprintf("%s %s %v", nestStr, fd.Name, fd.ChSpec)
+
 		// add comment
 		if fd.Description != "" {
 			if !isNested {
@@ -685,16 +735,19 @@ func (td *TableDef) Create(conn *Connect, table string) error {
 		}
 
 		ftype = fmt.Sprintf("%s%s,\n", ftype, nestEnd)
-		isNested = isNested && !(nestEnd == ")")
+		isNested = isNested && nestEnd != ")"
 		// Add to create query.
 		qry = fmt.Sprintf("%s %s", qry, ftype)
 	}
+
 	q := []byte(qry)
 	q[len(q)-2] = ')'
 	qry = fmt.Sprintf("%s ENGINE=%v()\nORDER BY (%s)", q, td.Engine, td.Key)
+
 	if _, err := conn.Exec(qry); err != nil {
 		return err
 	}
+
 	// Putting a comment in a CREATE TABLE for a nested field throws an error in ClickHouse
 	for _, qry := range alter {
 		if _, err := conn.Exec(qry); err != nil {
@@ -709,6 +762,7 @@ func checkLen(fd *FieldDef) error {
 	if fd.ChSpec.Base != ChFloat && fd.ChSpec.Base != ChInt {
 		return nil
 	}
+
 	if fd.ChSpec.Length != 32 && fd.ChSpec.Length != 64 {
 		return Wrapper(ErrFields,
 			fmt.Sprintf("Floats and Ints must have length 32 or 64, field %s", fd.Name))
@@ -720,14 +774,17 @@ func checkConst(fd *FieldDef, val interface{}) (ret interface{}, err error) {
 	if val == nil {
 		return nil, nil
 	}
-	var x interface{}
-	var ok bool
+	var (
+		x  interface{}
+		ok bool
+	)
+
 	if x, ok = convert(val, fd.ChSpec); !ok {
 		return nil, Wrapper(ErrFields,
 			fmt.Sprintf("cannot coerce value %v to %v, field: %s", fd.Missing, val, fd.Name))
 	}
-	return x, nil
 
+	return x, nil
 }
 
 // Check verifies that the fields are of the type chutils supports.  Check also converts, if needed, the
@@ -753,30 +810,39 @@ func (td *TableDef) Check() error {
 			if e := checkLen(fd); e != nil {
 				return e
 			}
+
 			v, e := checkConst(fd, fd.Missing)
 			if e != nil {
 				return e
 			}
 			fd.Missing = v
+
 			v, e = checkConst(fd, fd.Default)
 			if e != nil {
 				return e
 			}
+
 			fd.Default = v
+
 			if fd.Legal == nil {
 				fd.Legal = &LegalValues{}
 				continue
 			}
+
 			v, e = checkConst(fd, fd.Legal.HighLimit)
 			if e != nil {
 				return e
 			}
+
 			fd.Legal.HighLimit = v
+
 			v, e = checkConst(fd, fd.Legal.LowLimit)
 			if e != nil {
 				return e
 			}
+
 			fd.Legal.LowLimit = v
+
 			if !compare(fd.Legal.HighLimit, fd.Legal.LowLimit, fd.ChSpec) {
 				return Wrapper(ErrFields,
 					fmt.Sprintf("LowLimit %v >= HighLimit %v, field: %s", fd.Legal.LowLimit, fd.Legal.HighLimit, fd.Name))
@@ -790,14 +856,15 @@ func (td *TableDef) Check() error {
 
 // WriteElement writes a single field with separator char. For strings, the text qualifier is sdelim.
 // If sdelim is found, it is doubled.
-func WriteElement(el interface{}, char string, sdelim string) []byte {
+func WriteElement(el interface{}, char, sdelim string) []byte {
 	if el == nil {
 		return []byte(fmt.Sprintf("array()%s", char))
 	}
+
 	switch v := el.(type) {
 	case string:
 		if strings.Contains(v, sdelim) {
-			return []byte(fmt.Sprintf("'%s'%s", strings.Replace(v, sdelim, sdelim+sdelim, -1), char))
+			return []byte(fmt.Sprintf("'%s'%s", strings.ReplaceAll(v, sdelim, sdelim+sdelim), char))
 		}
 		return []byte(fmt.Sprintf("'%s'%s", v, char))
 	case time.Time:
@@ -810,7 +877,7 @@ func WriteElement(el interface{}, char string, sdelim string) []byte {
 }
 
 // WriteArray writes a ClickHouse Array type. The format is "array(a1,a2,...)"
-func WriteArray(el interface{}, char string, sdelim string) (line []byte) {
+func WriteArray(el interface{}, char, sdelim string) (line []byte) {
 	line = []byte("array(")
 	it := newIterator(el)
 	for it.Next() {
@@ -827,10 +894,10 @@ func WriteArray(el interface{}, char string, sdelim string) (line []byte) {
 // if after < 0, then the output isn't Inserted (for testing)
 // if ignore == true, the read errors are ignored
 func Export(rdr Input, wrtr Output, after int, ignore bool) error {
-
 	var data []Row
 	fds := rdr.TableSpec().FieldDefs
 	sep := string(wrtr.Separator())
+
 	for r := 0; ; r++ {
 		var err error
 		if data, _, err = rdr.Read(1, true); err != nil {
@@ -848,19 +915,23 @@ func Export(rdr Input, wrtr Output, after int, ignore bool) error {
 			}
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 		}
-		// with the row, create line which is a []byte array of the fields separated by wrtr.Separtor()
+
+		// with the row, create line which is a []byte array of the fields separated by wrtr.Separator()
 		line := make([]byte, 0)
+
 		for c := 0; c < len(data[0]); c++ {
 			// if we don't keep this field, move on to next one
 			if fds[c].Drop {
 				continue
 			}
 			var l interface{}
+
 			if s, ok := l.(string); ok {
 				if strings.Contains(s, wrtr.Text()) {
-					l = strings.Replace(s, wrtr.Text(), wrtr.Text()+wrtr.Text(), -1)
+					l = strings.ReplaceAll(s, wrtr.Text(), wrtr.Text()+wrtr.Text())
 				}
 			}
+
 			if reflect.ValueOf(data[0][c]).Kind() == reflect.Slice {
 				line = append(line, WriteArray(data[0][c], sep, wrtr.Text())...)
 			} else {
@@ -872,11 +943,13 @@ func Export(rdr Input, wrtr Output, after int, ignore bool) error {
 		if wrtr.EOL() != 0 {
 			char = byte(wrtr.EOL())
 		}
+
 		line[len(line)-1] = char
 		// Now put the line to wrtr
 		if _, err = wrtr.Write(line); err != nil {
 			return Wrapper(ErrInput, fmt.Sprintf("%v", r))
 		}
+
 		if r > 0 && after > 0 && r%after == 0 {
 			if e := wrtr.Insert(); e != nil {
 				return e
@@ -890,8 +963,8 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
 	queueLen := len(rdrs)
 	defer func() {
 		for ind := 0; ind < queueLen; ind++ {
-			rdrs[ind].Close()
-			wrtrs[ind].Close()
+			_ = rdrs[ind].Close()
+			_ = wrtrs[ind].Close()
 		}
 	}()
 	if nWorker == 0 {

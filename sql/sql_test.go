@@ -5,16 +5,15 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/invertedv/chutils"
 	"github.com/invertedv/chutils/file"
-	//	_ "github.com/mailru/go-clickhouse/v2"
 	"github.com/stretchr/testify/assert"
-	"log"
-	"os"
-	"testing"
-	"time"
 )
 
 func TestReader_Init(t *testing.T) {
@@ -61,7 +60,6 @@ func TestReader_Init(t *testing.T) {
 	}
 	assert.Equal(t, resNames, actNames)
 	assert.Equal(t, resBases, actBases)
-
 }
 
 func TestReader_Read(t *testing.T) {
@@ -69,7 +67,7 @@ func TestReader_Read(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
 	var err error
-	//	con := &chutils.Connect{"", "", "", "", db}
+
 	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
@@ -110,7 +108,7 @@ func TestReader_Read(t *testing.T) {
 	mock.ExpectQuery(`^SELECT \* FROM \(SELECT \* FROM bbb\) LIMIT 1`).WillReturnRows(rows)
 
 	rdr := NewReader("SELECT * FROM bbb", con)
-	if err := rdr.Init("astr", chutils.MergeTree); err != nil {
+	if err = rdr.Init("astr", chutils.MergeTree); err != nil {
 		t.Errorf("incorrect query")
 	}
 	// put in some bounds and missing values for these fields
@@ -156,7 +154,7 @@ func TestReader_Seek(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
 	var err error
-	//	con := &chutils.Connect{"", "", "", "", db}
+
 	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
@@ -221,7 +219,7 @@ func TestWriter_Insert(t *testing.T) {
 	var db *sql.DB
 	var mock sqlmock.Sqlmock
 	var err error
-	//	con := &chutils.Connect{"", "", "", "", db}
+
 	con := &chutils.Connect{Host: "", User: "", Password: "", DB: db}
 	con.DB, mock, err = sqlmock.New()
 	if err != nil {
@@ -267,34 +265,34 @@ func ExampleWriter_Write() {
 	var con *chutils.Connect
 	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	defer func() {
 		if con.Close() != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 	}()
 	f, err := os.Open(inFile)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	rdr := file.NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
 	defer func() {
 		if rdr.Close() != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 	}()
 	if e := rdr.Init("zip", chutils.MergeTree); e != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	if e := rdr.TableSpec().Impute(rdr, 0, .95); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 
 	// Specify zip as FixedString(5) with a missing value of 00000
 	_, fd, err := rdr.TableSpec().Get("zip")
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	// zip will impute to int if we don't make this change
 	fd.ChSpec.Base = chutils.ChFixedString
@@ -306,7 +304,7 @@ func ExampleWriter_Write() {
 	// Specify value as having a range of [0,30] with a missing value of -1.0
 	_, fd, err = rdr.TableSpec().Get("value")
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	fd.Legal.HighLimit = 30.0
 	fd.Legal.LowLimit = 0.0
@@ -314,22 +312,24 @@ func ExampleWriter_Write() {
 
 	rdr.TableSpec().Engine = chutils.MergeTree
 	rdr.TableSpec().Key = "id"
-	if err := rdr.TableSpec().Create(con, table); err != nil {
-		log.Fatalln(err)
+	if err = rdr.TableSpec().Create(con, table); err != nil {
+		panic(err)
 	}
 
 	wrtr := NewWriter(table, con)
-	if err := chutils.Export(rdr, wrtr, 0, false); err != nil {
-		log.Fatalln(err)
+	if err = chutils.Export(rdr, wrtr, 0, false); err != nil {
+		panic(err)
 	}
+
 	qry := fmt.Sprintf("SELECT * FROM %s", table)
+
 	res, err := con.Query(qry)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	defer func() {
 		if res.Close() != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 	}()
 	for res.Next() {
@@ -339,7 +339,7 @@ func ExampleWriter_Write() {
 			value float64
 		)
 		if res.Scan(&id, &zip, &value) != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 		fmt.Println(id, zip, value)
 	}
@@ -349,5 +349,4 @@ func ExampleWriter_Write() {
 	//1X88 43210 19.2
 	//1r99 94043 -1
 	//1x09 00000 9.9
-
 }

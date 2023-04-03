@@ -5,9 +5,10 @@ package str
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/invertedv/chutils/file"
 	"github.com/xuri/excelize/v2"
-	"strings"
 )
 
 // ReaderCloser just embeds a *strings.Reader
@@ -21,7 +22,7 @@ func (r *ReaderCloser) Close() error {
 }
 
 // NewReader generates a new file.Reader for the string input.
-func NewReader(s string, separator rune, eol rune, quote rune, width int, skip int, maxRead int) *file.Reader {
+func NewReader(s string, separator, eol, quote rune, width int, skip int, maxRead int) *file.Reader {
 	srdr := strings.NewReader(s)
 	rdr := &ReaderCloser{srdr}
 	return file.NewReader("", separator, eol, quote, width, skip, maxRead, rdr, 0)
@@ -38,7 +39,7 @@ func NewReader(s string, separator rune, eol rune, quote rune, width int, skip i
 // quote   - string quotes
 // skip    - rows to skip before reading data
 // maxRead - max # rows to read
-func NewXlReader(xl *excelize.File, sheet string, rowS, rowE, colS, colE int, quote rune, skip int, maxRead int) *file.Reader {
+func NewXlReader(xl *excelize.File, sheet string, rowS, rowE, colS, colE int, quote rune, skip, maxRead int) *file.Reader {
 	if sheet == "" {
 		sheet = xl.GetSheetName(0)
 	}
@@ -71,7 +72,7 @@ func NewXlReader(xl *excelize.File, sheet string, rowS, rowE, colS, colE int, qu
 }
 
 // returns the Excel axis address for a cell (e.g. (0,0) -> "A1"
-func makeCol(col int, row int) string {
+func makeCol(col, row int) string {
 	cols := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	if col < len(cols) {
 		return string(cols[col]) + fmt.Sprintf("%d", row+1)
@@ -79,5 +80,4 @@ func makeCol(col int, row int) string {
 	tens := col / 26
 	ones := col % 26
 	return string(cols[tens-1]) + string(cols[ones]) + fmt.Sprintf("%d", row+1)
-
 }

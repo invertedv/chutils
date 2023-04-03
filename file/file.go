@@ -9,13 +9,14 @@ package file
 import (
 	"bufio"
 	"fmt"
-	"github.com/invertedv/chutils"
 	"io"
 	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/invertedv/chutils"
 )
 
 // Reader implements chutils.Input interface.
@@ -23,7 +24,7 @@ type Reader struct {
 	Skip      int               // Skip is the # of rows to skip in the file
 	RowsRead  int               // RowsRead is current count of rows read from the file (includes header)
 	MaxRead   int               // MaxRead is the maximum number of rows to read
-	tableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing the fields in the source.  Can be supplied or derived from the file
+	tableSpec *chutils.TableDef // TableSpec is the chutils.TableDef representing.  Can be supplied or derived from the file.
 	Width     int               // Width is the line width for flat files
 	Quote     rune              // Quote is the optional quote around strings that contain the Separator
 	eol       rune              // EOL is the end of line character
@@ -40,6 +41,7 @@ func NewReader(filename string, separator rune, eol rune, quote rune, width int,
 	if bufSize == 0 {
 		bufSize = 4096
 	}
+
 	r := bufio.NewReaderSize(rws, bufSize)
 
 	return &Reader{
@@ -105,12 +107,14 @@ func (rdr *Reader) Seek(lineNo int) error {
 	}
 	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
 	rdr.RowsRead = 0
+
 	for ind := 0; ind < lineNo-1+rdr.Skip; ind++ {
 		rdr.RowsRead++
 		if _, err := rdr.rdr.ReadString(byte(rdr.EOL())); err != nil {
 			return chutils.Wrapper(chutils.ErrSeek, fmt.Sprintf("line %d", ind))
 		}
 	}
+
 	return nil
 }
 
@@ -126,10 +130,11 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	for e := error(nil); e != io.EOF; {
 		var d string
 		if d, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
+
 			if e != io.EOF {
 				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
-			_ = d
+
 			if e == io.EOF {
 				numLines -= rdr.Skip
 				// last line doesn't end in \n
@@ -137,10 +142,13 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 					numLines++
 				}
 			}
+
 			return
 		}
+
 		numLines++
 	}
+
 	return
 }
 
@@ -173,11 +181,14 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) error {
 		}
 		fds[ind] = fd
 	}
+
 	//	if key is empty, make it the first field
 	if key == "" {
 		key = fds[0].Name
 	}
+
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
+
 	return nil
 }
 
@@ -195,7 +206,9 @@ func (rdr *Reader) getLine() (line []string, err error) {
 			l += "\n"
 			err = nil
 		}
+
 		l = strings.Replace(l, "\r", "", -1)
+
 		// No quote string, so just split on Separator.
 		if rdr.Quote == 0 {
 			// drop EOL
@@ -207,10 +220,12 @@ func (rdr *Reader) getLine() (line []string, err error) {
 			}
 			return
 		}
+
 		// The file is quoted, so scan and don't count any Separator that occurs between the quotes.
 		haveQuote := false
 		f := make([]int32, len(l)) // temp slice where we put characters until we see a separator or EOL
 		ind := 0
+
 		for _, ch := range l {
 			switch ch {
 			case rdr.EOL():
@@ -230,6 +245,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 				ind++
 			}
 		}
+
 		return
 	}
 
@@ -241,17 +257,20 @@ func (rdr *Reader) getLine() (line []string, err error) {
 		}
 		return nil, err
 	}
+
 	lstr := string(l)
 	if len(lstr) != rdr.Width {
 		return nil, chutils.Wrapper(chutils.ErrFields, fmt.Sprintf("line is wrong width: %s", l))
 	}
 	line = make([]string, len(rdr.TableSpec().FieldDefs))
 	start := 0
+
 	for ind := 0; ind < len(line); ind++ {
 		w := rdr.TableSpec().FieldDefs[ind].Width
 		line[ind] = lstr[start : start+w]
 		start += w
 	}
+
 	return
 }
 
@@ -290,16 +309,20 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 		if csvrow, err = rdr.getLine(); err == io.EOF {
 			return
 		}
+
 		if err != nil {
 			err = chutils.Wrapper(chutils.ErrInput, fmt.Sprintf("read error at %d", rdr.RowsRead+1))
 			return
 		}
+
 		if have, need := len(csvrow), len(rdr.TableSpec().FieldDefs); have != need {
 			err = chutils.Wrapper(chutils.ErrFieldCount,
 				fmt.Sprintf("at row %d, need %d fields but got %d", rdr.RowsRead+1, need, have))
 			return
 		}
+
 		outrow := make(chutils.Row, 0)
+
 		for j := 0; j < numFields; j++ {
 			outrow = append(outrow, csvrow[j])
 		}
@@ -313,12 +336,15 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 			}
 			valid = append(valid, vrow)
 		}
+
 		data = append(data, outrow)
 		rdr.RowsRead++
+
 		if rdr.MaxRead > 0 && rdr.RowsRead > rdr.MaxRead {
 			err = io.EOF
 			return
 		}
+
 		if rowCount == nTarget && nTarget > 0 {
 			return
 		}
@@ -328,15 +354,17 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 // Rdrs generates slices of Readers of len nRdrs. The data represented by rdr0 is equally divided
 // amongst the Readers in the slice.
 func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
-
 	r = nil
 	nObs, err := rdr0.CountLines()
+
 	if err != nil {
 		return
 	}
+
 	if nRdrs < 1 {
 		return nil, chutils.Wrapper(chutils.ErrInput, "must have >= 1 reader")
 	}
+
 	nper := nObs / nRdrs
 	start := 1
 	for ind := 0; ind < nRdrs; ind++ {
@@ -356,6 +384,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 		start += nper
 		r = append(r, x)
 	}
+
 	return
 }
 

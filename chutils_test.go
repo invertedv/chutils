@@ -3,10 +3,11 @@ package chutils
 import (
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type mockRead struct {
@@ -83,7 +84,6 @@ func buildTableDef() TableDef {
 	}
 	td.FieldDefs = fd
 	return td
-
 }
 
 func TestTableDef_Impute(t *testing.T) {
@@ -186,7 +186,6 @@ func TestTableDef_Check(t *testing.T) {
 }
 
 func TestTableDef_Nest(t *testing.T) {
-	//	ch, err := NewChField(ChString, 0, OuterFuncs{OuterArray}, "")
 	ch := ChField{
 		Base:   ChString,
 		Length: 0,
@@ -245,7 +244,7 @@ func TestChType_String(t *testing.T) {
 	}
 	chs := []ChField{ch1, ch2, ch3}
 	for j, ch := range chs {
-		v := fmt.Sprintf("%v", ch)
+		v := ch.String()
 		assert.Equal(t, expect[j], v)
 	}
 }

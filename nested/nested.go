@@ -11,8 +11,9 @@
 package nested
 
 import (
-	"github.com/invertedv/chutils"
 	"io"
+
+	"github.com/invertedv/chutils"
 )
 
 // NewCalcFn defines the signature of a function that calculates a new field.
@@ -39,17 +40,21 @@ func NewReader(rdr chutils.Input, newFields []*chutils.FieldDef, newCalcs []NewC
 	fd := make(map[int]*chutils.FieldDef)
 	fdExist := rdr.TableSpec().FieldDefs
 	nExist := len(fdExist)
+
 	for ind := 0; ind < nExist; ind++ {
 		fd[ind] = fdExist[ind]
 	}
+
 	for ind := 0; ind < len(newFields); ind++ {
 		fd[ind+nExist] = newFields[ind]
 	}
+
 	ts := &chutils.TableDef{
 		Key:       rdr.TableSpec().Key,
 		Engine:    rdr.TableSpec().Engine,
 		FieldDefs: fd,
 	}
+
 	return &Reader{r: rdr, tableSpec: ts, newCalcs: newCalcs}, nil
 }
 
@@ -60,10 +65,10 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 // Read reads nTarget rows from the underlying reader -- Reader.r -- and adds calculated fields.
 // Validation is performed if validate == true.  Note: if validate == false, the return from r.Read are strings
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
-
 	data = nil
 	valid = nil
 	data, valid, errRead := rdr.r.Read(nTarget, validate)
+
 	// no data, return EOF
 	if len(data) == 0 {
 		return nil, nil, io.EOF
@@ -72,6 +77,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 	if errRead != nil && errRead != io.EOF {
 		return nil, nil, err
 	}
+
 	// have data but may also be EOF
 	var outValue interface{}
 
@@ -80,6 +86,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 	for row := 0; row < len(data); row++ {
 		for ind := 0; ind < len(rdr.newCalcs); ind++ {
 			indBig := ind + nExist
+
 			if !validate {
 				outValue, err = rdr.newCalcs[ind](rdr.tableSpec, data[0], nil, validate)
 				if err != nil {
@@ -88,15 +95,19 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 				data[row] = append(data[row], outValue)
 				break
 			}
+
 			outValue, err = rdr.newCalcs[ind](rdr.tableSpec, data[row], valid[row], validate)
+
 			if err != nil {
 				return nil, nil, err
 			}
+
 			outValueVal, status := rdr.TableSpec().FieldDefs[indBig].Validator(outValue)
 			data[row] = append(data[row], outValueVal)
 			valid[row] = append(valid[row], status)
 		}
 	}
+
 	return data, valid, errRead
 }
 

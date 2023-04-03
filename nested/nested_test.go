@@ -2,14 +2,14 @@ package nested
 
 import (
 	"fmt"
-	"github.com/invertedv/chutils"
-	"github.com/invertedv/chutils/file"
-	"github.com/stretchr/testify/assert"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/invertedv/chutils"
+	"github.com/invertedv/chutils/file"
+	"github.com/stretchr/testify/assert"
 )
 
 type rstr struct{ strings.Reader }
@@ -85,7 +85,7 @@ func TestReader_Read(t *testing.T) {
 // Example 1
 func ExampleReader_Read() {
 	/*
-		/home/will/examples/data/input.csv
+		/data/input.csv
 
 		x,y
 		1.0,2.0
@@ -93,26 +93,26 @@ func ExampleReader_Read() {
 		100.0, 100.0
 	*/
 
-	const myFile = "/home/will/examples/data/input.csv"
+	myFile := os.Getenv("data") + "/input.csv"
 	inFile, err := os.Open(myFile)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	baseReader := file.NewReader("", ',', '\n', '"', 0, 1, 0, inFile, 0)
 	defer func() {
 		if baseReader.Close() != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 	}()
 	// initialize TableSpec
 	if e := baseReader.Init("x", chutils.MergeTree); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 	if err := baseReader.TableSpec().Impute(baseReader, 0, .95); err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	if err = baseReader.TableSpec().Check(); err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	fd := &chutils.FieldDef{
 		Name:        "product",
@@ -140,11 +140,11 @@ func ExampleReader_Read() {
 	// This reader will include our new field "product"
 	reader, err := NewReader(baseReader, newFields, newCalcs)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	data, _, err := reader.Read(0, true)
 	if err != nil && err != io.EOF {
-		log.Fatalln(err)
+		panic(err)
 	}
 	fmt.Println(data)
 	// Output: 	[[1 2 2] [3 4 12] [100 100 -1]]
@@ -153,23 +153,23 @@ func ExampleReader_Read() {
 // Example : Column Locations Unknown
 func ExampleReader_Read_additional() {
 	// If we are unsure of where x and y might be in the CSV, we can find out from the TableSpec
-	const myFile = "/home/will/examples/data/input.csv"
+	myFile := os.Getenv("data") + "/input.csv"
 	inFile, err := os.Open(myFile)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	baseReader := file.NewReader("", ',', '\n', '"', 0, 1, 0, inFile, 0)
 	defer func() {
 		if baseReader.Close() != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 	}()
 	// initialize TableSpec
 	if e := baseReader.Init("x", chutils.MergeTree); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 	if e := baseReader.TableSpec().Impute(baseReader, 0, .95); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 	fd := &chutils.FieldDef{
 		Name:        "product",
@@ -189,11 +189,11 @@ func ExampleReader_Read_additional() {
 			// if we don't know where x and y are in the file, we can get their indices
 			indx, _, err := td.Get("x")
 			if err != nil {
-				log.Fatalln(err)
+				panic(err)
 			}
 			indy, _, err := td.Get("y")
 			if err != nil {
-				log.Fatalln(err)
+				panic(err)
 			}
 			x, okx := data[indx].(float64)
 			y, oky := data[indy].(float64)
@@ -205,11 +205,11 @@ func ExampleReader_Read_additional() {
 	// This reader will include our new field "product"
 	reader, err := NewReader(baseReader, newFields, newCalcs)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	data, _, err := reader.Read(0, true)
 	if err != nil && err != io.EOF {
-		log.Fatalln(err)
+		panic(err)
 	}
 	fmt.Println(data)
 	// Output: 	[[1 2 2] [3 4 12] [100 100 -1]]
