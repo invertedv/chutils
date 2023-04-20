@@ -854,6 +854,45 @@ func (td *TableDef) Check() error {
 	return nil
 }
 
+// Copy makes an independent (no shared memory) of the TableDef.  if noLegal=true, then
+// the LegalValues are not copied over (so there would be no validation check)
+func (td *TableDef) Copy(noLegal bool) *TableDef {
+	fdsOut := make(map[int]*FieldDef)
+
+	for ind, fdIn := range td.FieldDefs {
+		fdOut := &FieldDef{
+			Name:        fdIn.Name,
+			ChSpec:      fdIn.ChSpec,
+			Description: fdIn.Description,
+			Legal:       fdIn.Legal,
+			Missing:     fdIn.Missing,
+			Default:     fdIn.Default,
+			Width:       fdIn.Width,
+			Drop:        fdIn.Drop,
+		}
+
+		if noLegal {
+			fdOut.Legal = &LegalValues{}
+		}
+
+		fdsOut[ind] = fdOut
+	}
+
+	return NewTableDef(td.Key, td.Engine, fdsOut)
+}
+
+// FieldList returns a slice of field names in the same order they are in the data
+func (td *TableDef) FieldList() []string {
+	var fieldList []string
+
+	fds := td.FieldDefs
+	for ind := 0; ind < len(fds); ind++ {
+		fieldList = append(fieldList, fds[ind].Name)
+	}
+
+	return fieldList
+}
+
 // WriteElement writes a single field with separator char. For strings, the text qualifier is sdelim.
 // If sdelim is found, it is doubled.
 func WriteElement(el interface{}, char, sdelim string) []byte {

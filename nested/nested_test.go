@@ -108,8 +108,8 @@ func ExampleReader_Read() {
 	if e := baseReader.Init("x", chutils.MergeTree); e != nil {
 		panic(e)
 	}
-	if err := baseReader.TableSpec().Impute(baseReader, 0, .95); err != nil {
-		panic(err)
+	if e := baseReader.TableSpec().Impute(baseReader, 0, .95); e != nil {
+		panic(e)
 	}
 	if err = baseReader.TableSpec().Check(); err != nil {
 		panic(err)

@@ -65,8 +65,6 @@ func (rdr *Reader) TableSpec() *chutils.TableDef {
 // Read reads nTarget rows from the underlying reader -- Reader.r -- and adds calculated fields.
 // Validation is performed if validate == true.  Note: if validate == false, the return from r.Read are strings
 func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid []chutils.Valid, err error) {
-	data = nil
-	valid = nil
 	data, valid, errRead := rdr.r.Read(nTarget, validate)
 
 	// no data, return EOF

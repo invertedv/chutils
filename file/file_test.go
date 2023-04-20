@@ -7,7 +7,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/invertedv/chutils"
 
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -289,7 +288,7 @@ func (w *wstr) Close() error {
 	return nil
 }
 func (w *wstr) Write(b []byte) (n int, err error) {
-	w.buf = w.buf + string(b)
+	w.buf += string(b)
 	return len(b), nil
 }
 
@@ -375,34 +374,34 @@ func ExampleReader_Read_cSV() {
 	var con *chutils.Connect
 	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	defer func() {
 		_ = con.Close()
 	}()
 	f, err := os.Open(inFile)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	rdr := NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
 	defer func() {
 		_ = rdr.Close()
 	}()
 	if e := rdr.Init("id", chutils.MergeTree); e != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	if e := rdr.TableSpec().Impute(rdr, 0, .95); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 	// Check the internal consistency of TableSpec
 	if e := rdr.TableSpec().Check(); e != nil {
-		log.Fatalln(e)
+		panic(e)
 	}
 
 	// Specify zip as FixedString(5) with a missing value of 00000
 	_, fd, err := rdr.TableSpec().Get("zip")
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	// zip will impute to int if we don't make this change
 	fd.ChSpec.Base = chutils.ChFixedString
@@ -414,7 +413,7 @@ func ExampleReader_Read_cSV() {
 	// Specify value as having a range of [0,30] with a missing value of -1.0
 	_, fd, err = rdr.TableSpec().Get("value")
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	fd.Legal.HighLimit = 30.0
 	fd.Legal.LowLimit = 0.0
@@ -422,13 +421,13 @@ func ExampleReader_Read_cSV() {
 
 	rdr.TableSpec().Engine = chutils.MergeTree
 	rdr.TableSpec().Key = "id"
-	if err := rdr.TableSpec().Create(con, table); err != nil {
-		log.Fatalln(err)
+	if e := rdr.TableSpec().Create(con, table); e != nil {
+		panic(e)
 	}
 
 	fx, err := os.Create(tmpFile)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	defer func() {
 		_ = fx.Close()
@@ -437,13 +436,13 @@ func ExampleReader_Read_cSV() {
 		_ = os.Remove(tmpFile)
 	}()
 	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
-	if err := chutils.Export(rdr, wrtr, 0, false); err != nil {
-		log.Fatalln(err)
+	if e := chutils.Export(rdr, wrtr, 0, false); e != nil {
+		panic(e)
 	}
 	qry := fmt.Sprintf("SELECT * FROM %s", table)
 	res, err := con.Query(qry)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
 	defer func() {
 		_ = res.Close()
@@ -455,7 +454,7 @@ func ExampleReader_Read_cSV() {
 			value float64
 		)
 		if res.Scan(&id, &zip, &value) != nil {
-			log.Fatalln(err)
+			panic(err)
 		}
 		fmt.Println(id, zip, value)
 	}

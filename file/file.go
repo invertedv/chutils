@@ -105,7 +105,7 @@ func (rdr *Reader) Seek(lineNo int) error {
 	if _, e := rdr.rws.Seek(0, 0); e != nil {
 		return e
 	}
-	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize) // bufio.NewReader(csvr.rws)
+	rdr.rdr = bufio.NewReaderSize(rdr.rws, rdr.bufSize)
 	rdr.RowsRead = 0
 
 	for ind := 0; ind < lineNo-1+rdr.Skip; ind++ {
@@ -130,7 +130,6 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 	for e := error(nil); e != io.EOF; {
 		var d string
 		if d, e = rdr.rdr.ReadString(byte(rdr.EOL())); e != nil {
-
 			if e != io.EOF {
 				return 0, chutils.Wrapper(chutils.ErrInput, "CountLines Failed")
 			}
@@ -143,13 +142,13 @@ func (rdr *Reader) CountLines() (numLines int, err error) {
 				}
 			}
 
-			return
+			return numLines, err
 		}
 
 		numLines++
 	}
 
-	return
+	return numLines, err
 }
 
 // Init initialize FieldDefs slice Reader.TableSpec() from header row of input.
@@ -194,7 +193,6 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) error {
 
 // GetLine returns the next line from Reader as a slice of strings
 func (rdr *Reader) getLine() (line []string, err error) {
-	err = nil
 	if rdr.Width == 0 {
 		var l string
 		if l, err = rdr.rdr.ReadString(byte(rdr.EOL())); err != nil {
@@ -207,7 +205,7 @@ func (rdr *Reader) getLine() (line []string, err error) {
 			err = nil
 		}
 
-		l = strings.Replace(l, "\r", "", -1)
+		l = strings.ReplaceAll(l, "\r", "")
 
 		// No quote string, so just split on Separator.
 		if rdr.Quote == 0 {
@@ -385,7 +383,7 @@ func Rdrs(rdr0 *Reader, nRdrs int) (r []chutils.Input, err error) {
 		r = append(r, x)
 	}
 
-	return
+	return r, err
 }
 
 // Writer implements chutils.Output.  Writer will accept any type that satisfies WriterCloser. Typically, this would
@@ -437,12 +435,12 @@ func (wtr *Writer) Text() string {
 }
 
 // NewWriter creates a new Writer instance
-func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator rune, eol rune, table string) *Writer {
+func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator, eol rune, table string) *Writer {
 	return &Writer{f, table, name, separator, eol, "", con}
 }
 
 // Wrtrs creates a slice of Writers suitable for chutils.Concur.  The file names are chosen randomly.
-func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator rune, eol rune, table string) (wrtrs []chutils.Output, err error) {
+func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator, eol rune, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 
 	wrtrs = nil
