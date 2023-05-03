@@ -905,9 +905,9 @@ func WriteElement(el interface{}, char, sdelim string) []byte {
 		if strings.Contains(v, sdelim) {
 			return []byte(fmt.Sprintf("'%s'%s", strings.ReplaceAll(v, sdelim, sdelim+sdelim), char))
 		}
-		return []byte(fmt.Sprintf("'%s'%s", v, char))
+		return []byte(fmt.Sprintf("%s%s%s%s", sdelim, v, sdelim, char))
 	case time.Time:
-		return []byte(fmt.Sprintf("'%s'%s", v.Format("2006-01-02"), char))
+		return []byte(fmt.Sprintf("%s%s%s%s", sdelim, v.Format("2006-01-02"), sdelim, char))
 	case float64, float32:
 		return []byte(fmt.Sprintf("%v%s", v, char))
 	default:

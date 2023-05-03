@@ -19,7 +19,7 @@ func ToCSV(rdr chutils.Input, outCSV string, separator, eol, quote rune) error {
 	}
 	defer func() { _ = handle.Close() }()
 
-	if _, e := handle.WriteString(fmt.Sprintf("%s\n", strings.Join(rdr.TableSpec().FieldList(), ","))); e != nil {
+	if _, e := fmt.Fprintf(handle, "%s\n", strings.Join(rdr.TableSpec().FieldList(), ",")); e != nil {
 		return e
 	}
 
@@ -56,6 +56,10 @@ func TableToCSV(table, outCSV string, separator, eol, quote rune, conn *chutils.
 		return e
 	}
 
+	if e := rdr.Reset(); e != nil {
+		return e
+	}
+
 	return ToCSV(rdr, outCSV, separator, eol, quote)
 }
 
@@ -71,6 +75,7 @@ func CSVToTable(inCSV, outTable string, separator, eol, quote rune, after int, c
 	if e != nil {
 		return e
 	}
+	defer func() { _ = handle.Close() }()
 
 	rdr := f.NewReader(inCSV, separator, eol, quote, width, skip, 0, handle, 0)
 	if err := rdr.Init("", chutils.MergeTree); err != nil {
@@ -82,4 +87,27 @@ func CSVToTable(inCSV, outTable string, separator, eol, quote rune, after int, c
 	}
 
 	return ToTable(rdr, outTable, after, conn)
+}
+
+// CSVReader creates a chutils/file reader for a CSV file.
+func CSVReader(fileName string, delim, eol, quote rune, key string) (rdr *f.Reader, err error) {
+	const threshold = 0.95
+
+	var rws *os.File
+
+	rws, err = os.Open(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	rdr = f.NewReader(fileName, delim, eol, quote, 0, 1, 0, rws, 0)
+	if e := rdr.Init(key, chutils.MergeTree); e != nil {
+		return nil, e
+	}
+
+	if e := rdr.TableSpec().Impute(rdr, 0, threshold); e != nil {
+		return nil, e
+	}
+
+	return rdr, nil
 }
