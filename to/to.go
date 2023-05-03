@@ -12,7 +12,7 @@ import (
 )
 
 // ToCSV writes the rdr data out to the CSV toFile. The CSV includes a header row.
-func ToCSV(rdr chutils.Input, outCSV string, separator rune) error {
+func ToCSV(rdr chutils.Input, outCSV string, separator, eol, quote rune) error {
 	handle, err := os.Create(outCSV)
 	if err != nil {
 		return err
@@ -23,7 +23,7 @@ func ToCSV(rdr chutils.Input, outCSV string, separator rune) error {
 		return e
 	}
 
-	wtr := f.NewWriter(handle, outCSV, nil, separator, '\n', "")
+	wtr := f.NewWriter(handle, outCSV, nil, separator, eol, quote, "")
 
 	// after = -1 means it will not also write to ClickHouse
 	if e := chutils.Export(rdr, wtr, -1, false); e != nil {
@@ -48,7 +48,7 @@ func ToTable(rdr chutils.Input, outTable string, after int, conn *chutils.Connec
 }
 
 // TableToCSV creates a CSV from a ClickHouse table with a header row.
-func TableToCSV(table, outCSV string, separator rune, conn *chutils.Connect) error {
+func TableToCSV(table, outCSV string, separator, eol, quote rune, conn *chutils.Connect) error {
 	qry := fmt.Sprintf("SELECT * FROM %s", table)
 	rdr := s.NewReader(qry, conn)
 
@@ -56,14 +56,15 @@ func TableToCSV(table, outCSV string, separator rune, conn *chutils.Connect) err
 		return e
 	}
 
-	return ToCSV(rdr, outCSV, separator)
+	return ToCSV(rdr, outCSV, separator, eol, quote)
 }
 
 // CSVToTable moves a CSV to a ClickHouse table.
-func CSVToTable(inCSV, outTable string, separator, quote rune, after int, conn *chutils.Connect) error {
+func CSVToTable(inCSV, outTable string, separator, eol, quote rune, after int, conn *chutils.Connect) error {
 	const (
 		width = 0
 		skip  = 1
+		tol   = 0.95
 	)
 
 	handle, e := os.Open(inCSV)
@@ -71,12 +72,12 @@ func CSVToTable(inCSV, outTable string, separator, quote rune, after int, conn *
 		return e
 	}
 
-	rdr := f.NewReader(inCSV, separator, '\n', quote, width, skip, 0, handle, 0)
+	rdr := f.NewReader(inCSV, separator, eol, quote, width, skip, 0, handle, 0)
 	if err := rdr.Init("", chutils.MergeTree); err != nil {
 		return err
 	}
 
-	if err := rdr.TableSpec().Impute(rdr, 0, .95); err != nil {
+	if err := rdr.TableSpec().Impute(rdr, 0, tol); err != nil {
 		return err
 	}
 

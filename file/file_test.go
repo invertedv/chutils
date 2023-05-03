@@ -300,7 +300,7 @@ func TestWriter_Export(t *testing.T) {
 	var con chutils.Connect
 
 	f := &wstr{""}
-	wtr := NewWriter(f, "A", &con, ',', '\n', "table")
+	wtr := NewWriter(f, "A", &con, ',', '\n', 0, "table")
 
 	input := []string{"a,b\n1,2\n3,4\n5,6\n7,8\n9,19\n"}
 
@@ -334,7 +334,7 @@ func TestWriter_Export(t *testing.T) {
 	fd.ChSpec.Base = chutils.ChInt
 	fd.ChSpec.Length = 64
 	f = &wstr{""}
-	wtr = NewWriter(f, "A", &con, ',', '\n', "table")
+	wtr = NewWriter(f, "A", &con, ',', '\n', 0, "table")
 	if e := chutils.Export(rt1, wtr, -1, false); e != nil {
 		t.Errorf("unexpected Export error")
 	}
@@ -435,7 +435,7 @@ func ExampleReader_Read_cSV() {
 	defer func() {
 		_ = os.Remove(tmpFile)
 	}()
-	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', table)
+	wrtr := NewWriter(fx, tmpFile, con, '|', '\n', 0, table)
 	if e := chutils.Export(rdr, wrtr, 0, false); e != nil {
 		panic(e)
 	}

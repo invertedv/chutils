@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/invertedv/chutils"
 )
@@ -36,7 +35,7 @@ type Reader struct {
 }
 
 // NewReader initializes an instance of Reader
-func NewReader(filename string, separator rune, eol rune, quote rune, width int, skip int, maxRead int,
+func NewReader(filename string, separator, eol, quote rune, width int, skip int, maxRead int,
 	rws io.ReadSeekCloser, bufSize int) *Reader {
 	if bufSize == 0 {
 		bufSize = 4096
@@ -435,23 +434,27 @@ func (wtr *Writer) Text() string {
 }
 
 // NewWriter creates a new Writer instance
-func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator, eol rune, table string) *Writer {
-	return &Writer{f, table, name, separator, eol, "", con}
+func NewWriter(f io.WriteCloser, name string, con *chutils.Connect, separator, eol, quote rune, table string) *Writer {
+	text := string(quote)
+	if quote == 0 {
+		text = ""
+	}
+
+	return &Writer{f, table, name, separator, eol, text, con}
 }
 
 // Wrtrs creates a slice of Writers suitable for chutils.Concur.  The file names are chosen randomly.
-func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator, eol rune, table string) (wrtrs []chutils.Output, err error) {
+func Wrtrs(tmpDir string, nWrtr int, con *chutils.Connect, separator, eol, quote rune, table string) (wrtrs []chutils.Output, err error) {
 	var a *os.File
 
 	wrtrs = nil
-	rand.Seed(time.Now().UnixMicro())
 
 	for ind := 0; ind < nWrtr; ind++ {
 		tmpFile := fmt.Sprintf("%s/tmp%d.csv", tmpDir, rand.Int31())
 		if a, err = os.Create(tmpFile); err != nil {
 			return
 		}
-		w := NewWriter(a, tmpFile, con, separator, eol, table)
+		w := NewWriter(a, tmpFile, con, separator, eol, quote, table)
 		wrtrs = append(wrtrs, w)
 	}
 	return
