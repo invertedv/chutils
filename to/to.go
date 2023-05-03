@@ -11,9 +11,9 @@ import (
 	s "github.com/invertedv/chutils/sql"
 )
 
-// Csv writes the rdr data out to the CSV toFile
-func Csv(rdr chutils.Input, toFile string) error {
-	handle, err := os.Create(toFile)
+// ToCSV writes the rdr data out to the CSV toFile. The CSV includes a header row.
+func ToCSV(rdr chutils.Input, outCSV string, separator rune) error {
+	handle, err := os.Create(outCSV)
 	if err != nil {
 		return err
 	}
@@ -23,7 +23,7 @@ func Csv(rdr chutils.Input, toFile string) error {
 		return e
 	}
 
-	wtr := f.NewWriter(handle, toFile, nil, ',', '\n', "")
+	wtr := f.NewWriter(handle, outCSV, nil, separator, '\n', "")
 
 	// after = -1 means it will not also write to ClickHouse
 	if e := chutils.Export(rdr, wtr, -1, false); e != nil {
@@ -33,8 +33,8 @@ func Csv(rdr chutils.Input, toFile string) error {
 	return rdr.Reset()
 }
 
-// Sql writes the rdr data out to a ClickHouse table
-func Sql(rdr chutils.Input, outTable string, after int, conn *chutils.Connect) error {
+// ToTable writes the rdr data out to a ClickHouse table
+func ToTable(rdr chutils.Input, outTable string, after int, conn *chutils.Connect) error {
 	wtr := s.NewWriter(outTable, conn)
 	if e := rdr.TableSpec().Create(conn, outTable); e != nil {
 		return e
@@ -45,4 +45,40 @@ func Sql(rdr chutils.Input, outTable string, after int, conn *chutils.Connect) e
 	}
 
 	return rdr.Reset()
+}
+
+// TableToCSV creates a CSV from a ClickHouse table with a header row.
+func TableToCSV(table, outCSV string, separator rune, conn *chutils.Connect) error {
+	qry := fmt.Sprintf("SELECT * FROM %s", table)
+	rdr := s.NewReader(qry, conn)
+
+	if e := rdr.Init("", chutils.MergeTree); e != nil {
+		return e
+	}
+
+	return ToCSV(rdr, outCSV, separator)
+}
+
+// CSVToTable moves a CSV to a ClickHouse table.
+func CSVToTable(inCSV, outTable string, separator, quote rune, after int, conn *chutils.Connect) error {
+	const (
+		width = 0
+		skip  = 1
+	)
+
+	handle, e := os.Open(inCSV)
+	if e != nil {
+		return e
+	}
+
+	rdr := f.NewReader(inCSV, separator, '\n', quote, width, skip, 0, handle, 0)
+	if err := rdr.Init("", chutils.MergeTree); err != nil {
+		return err
+	}
+
+	if err := rdr.TableSpec().Impute(rdr, 0, .95); err != nil {
+		return err
+	}
+
+	return ToTable(rdr, outTable, after, conn)
 }
