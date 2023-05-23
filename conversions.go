@@ -160,7 +160,13 @@ func int64date(x any, dfmt string) (time.Time, bool) {
 	f, err := time.Parse(dfmt, fmt.Sprintf("%v", x.(int64)))
 	return f, err == nil
 }
-func datedate(x any, dfmt string) (time.Time, bool) { _ = dfmt; return x.(time.Time), true }
+func datedate(x any, dfmt string) (time.Time, bool) {
+	_ = dfmt
+	t := x.(time.Time)
+	// eliminate seconds, etc and set to UTC
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), true
+}
+
 func intdate(x any, dfmt string) (time.Time, bool) {
 	f, err := time.Parse(dfmt, fmt.Sprintf("%v", x.(int)))
 	return f, err == nil
