@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.8.3
 	github.com/DATA-DOG/go-sqlmock v1.5.0
+	github.com/invertedv/keyval v0.0.15
 	github.com/stretchr/testify v1.8.2
 	github.com/xuri/excelize/v2 v2.6.0
 )
