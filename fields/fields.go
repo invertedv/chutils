@@ -35,7 +35,7 @@ func conv(x *keyval.Value, fieldType chutils.ChField) (xOut any) {
 
 		switch fieldType.Length {
 		case b32:
-			xOut = *x.AsInt
+			xOut = int32(*x.AsInt)
 		case b64:
 			xOut = int64(*x.AsInt)
 		}
@@ -105,6 +105,7 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 		fd.ChSpec = chutils.ChField{Base: chutils.ChDate, Format: kv.Get("format").AsString}
 		fd.Legal.LowLimit, fd.Legal.HighLimit = conv(kv.Get("low"), fd.ChSpec), conv(kv.Get("high"), fd.ChSpec)
 		fd.Missing, fd.Default = conv(kv.Get("miss"), fd.ChSpec), conv(kv.Get("default"), fd.ChSpec)
+		fd.ChSpec.Format = "20060102" // default, may be replaced by user
 	}
 
 	if drop := kv.Get("drop"); drop != nil {
@@ -113,6 +114,10 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 
 	if desc := kv.Get("desc"); desc != nil {
 		fd.Description = desc.AsString
+	}
+
+	if format := kv.Get("format"); format != nil {
+		fd.ChSpec.Format = format.AsString
 	}
 
 	return fd, order, nil
