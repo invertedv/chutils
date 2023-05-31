@@ -37,3 +37,10 @@ default:type-string
 
 format:required-no
 format:type-string
+
+from:required-no
+format:type-string
+
+func:required-no
+format:type-string
+

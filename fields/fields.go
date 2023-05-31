@@ -88,7 +88,7 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 		}
 		fd.Default = conv(kv.Get("default"), fd.ChSpec)
 	case "fixedString":
-		fd.ChSpec = chutils.ChField{Base: chutils.ChString, Length: *kv.Get("length").AsInt}
+		fd.ChSpec = chutils.ChField{Base: chutils.ChFixedString, Length: *kv.Get("length").AsInt}
 		if lvl := kv.Get("levels"); lvl != nil {
 			fd.Legal.Levels = lvl.AsSliceS
 		}
@@ -123,7 +123,7 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 	return fd, order, nil
 }
 
-func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, error) {
+func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, map[string]keyval.KeyVal, error) {
 	fds := make(map[int]*chutils.FieldDef)
 
 	fldsX := strings.Split(fields, "\n")
@@ -133,6 +133,8 @@ func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, error) {
 			flds = append(flds, fldsX[ind])
 		}
 	}
+
+	inputMap := make(map[string]keyval.KeyVal)
 
 	var key, val, kv []string
 	process, eof := false, false
@@ -156,15 +158,17 @@ func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, error) {
 
 		if (process || eof) && key != nil {
 			if fldDefs, e = keyval.ProcessKVs(key, val); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			if e := keyval.CheckLegals(fldDefs, fieldKeys); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
+
+			inputMap[fldDefs.Get("name").AsString] = fldDefs
 
 			fd, ord, err := kv2Fld(fldDefs)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			fds[ord] = fd
@@ -178,9 +182,9 @@ func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, error) {
 
 	for ind := 0; ind < len(fds); ind++ {
 		if _, ok := fds[ind]; !ok {
-			return nil, fmt.Errorf("incorrect field ordering")
+			return nil, nil, fmt.Errorf("incorrect field ordering")
 		}
 	}
 
-	return fds, nil
+	return fds, inputMap, nil
 }
