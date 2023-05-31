@@ -91,7 +91,7 @@ func (rdr *Reader) Read(nTarget int, validate bool) (data []chutils.Row, valid [
 					return nil, nil, err
 				}
 				data[row] = append(data[row], outValue)
-				break
+				continue
 			}
 
 			outValue, err = rdr.newCalcs[ind](rdr.tableSpec, data[row], valid[row], validate)

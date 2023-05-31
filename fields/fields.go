@@ -55,7 +55,7 @@ func conv(x *keyval.Value, fieldType chutils.ChField) (xOut any) {
 			return nil
 		}
 
-		xOut = x.AsDate
+		xOut = *x.AsDate
 	case chutils.ChFixedString:
 		xOut = x.AsString
 		if len(xOut.(string)) != fieldType.Length {
