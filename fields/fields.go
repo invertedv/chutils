@@ -86,13 +86,13 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 		if lvl := kv.Get("levels"); lvl != nil {
 			fd.Legal.Levels = lvl.AsSliceS
 		}
-		fd.Default = conv(kv.Get("default"), fd.ChSpec)
+		fd.Default, fd.Missing = conv(kv.Get("default"), fd.ChSpec), conv(kv.Get("miss"), fd.ChSpec)
 	case "fixedString":
 		fd.ChSpec = chutils.ChField{Base: chutils.ChFixedString, Length: *kv.Get("length").AsInt}
 		if lvl := kv.Get("levels"); lvl != nil {
 			fd.Legal.Levels = lvl.AsSliceS
 		}
-		fd.Default = conv(kv.Get("default"), fd.ChSpec)
+		fd.Default, fd.Missing = conv(kv.Get("default"), fd.ChSpec), conv(kv.Get("miss"), fd.ChSpec)
 	case "float":
 		fd.ChSpec = chutils.ChField{Base: chutils.ChFloat, Length: *kv.Get("length").AsInt}
 		fd.Legal.LowLimit, fd.Legal.HighLimit = conv(kv.Get("low"), fd.ChSpec), conv(kv.Get("high"), fd.ChSpec)
@@ -146,6 +146,11 @@ func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, map[string]keyval
 
 		eof = ind+1 == len(flds)
 		kv = strings.SplitN(flds[ind], ":", 2)
+
+		if len(kv) != 2 {
+			return nil, nil, fmt.Errorf("missing :")
+		}
+
 		kv[0] = strings.ReplaceAll(kv[0], " ", "")
 		kv[1] = strings.TrimRight(strings.TrimLeft(kv[1], " "), " ")
 

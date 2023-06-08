@@ -87,7 +87,8 @@ var (
 
 // DateFormats are formats to try when guessing the field type in Impute()
 var DateFormats = []string{"2006-01-02", "2006-1-2", "2006/01/02", "2006/1/2", "20060102", "01022006",
-	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", time.RFC3339}
+	"01/02/2006", "1/2/2006", "01-02-2006", "1-2-2006", "200601", "Jan 2 2006", "January 2 2006",
+	"Jan 2, 2006", "January 2, 2006", time.RFC3339}
 
 // The Input interface specifies the requirements for reading source data.
 type Input interface {
