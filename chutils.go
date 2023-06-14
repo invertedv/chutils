@@ -1043,3 +1043,16 @@ func Concur(nWorker int, rdrs []Input, wrtrs []Output, after int) error {
 	}
 	return nil
 }
+
+// CommentColumn adds a comment to column 'column' of table 'table'
+func CommentColumn(table, column, comment string, conn *Connect) error {
+	qry := fmt.Sprintf("ALTER TABLE %s comment column %s '%s'", table, column, comment)
+	return conn.Execute(qry)
+}
+
+// CommentFds comments all the columns of table that are represented in fds.  Errors are ignored.
+func CommentFds(table string, fds map[int]*FieldDef, conn *Connect) {
+	for _, fd := range fds {
+		_ = CommentColumn(table, fd.Name, fd.Description, conn)
+	}
+}

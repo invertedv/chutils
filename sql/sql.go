@@ -336,6 +336,21 @@ func (rdr *Reader) Insert() error {
 	return rdr.conn.Execute(qry)
 }
 
+func (rdr *Reader) Materialize(orderBy string) error {
+	if rdr.Name == "" {
+		return chutils.Wrapper(chutils.ErrSQL, "Reader Name field is empty")
+	}
+
+	qry := fmt.Sprintf("DROP TABLE IF EXISTS %s", rdr.Name)
+	if e := rdr.conn.Execute(qry); e != nil {
+		return e
+	}
+
+	qry = fmt.Sprintf("CREATE MATERIALIZED VIEW %s ENGINE=MergeTree ORDER BY %s POPULATE AS %s", rdr.Name, orderBy, rdr.SQL)
+
+	return rdr.conn.Execute(qry)
+}
+
 // Writer implements chutils.Output
 type Writer struct {
 	Table     string           // Table is the output table
