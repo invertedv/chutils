@@ -1056,3 +1056,32 @@ func CommentFds(table string, fds map[int]*FieldDef, conn *Connect) {
 		_ = CommentColumn(table, fd.Name, fd.Description, conn)
 	}
 }
+
+// GetComments returns a map of field comments from the slice of tables. The key is the field name and
+// the value is the comment
+func GetComments(conn *Connect, table ...string) (map[string]string, error) {
+	descMap := make(map[string]string)
+
+	for _, dbTable := range table {
+		var (
+			rows *sql.Rows
+			err  error
+		)
+		sep := strings.Split(dbTable, ".")
+		qry := fmt.Sprintf("select name, comment from system.columns where table = '%s' and database = '%s'", sep[1], sep[0])
+		var name, desc string
+
+		if rows, err = conn.Query(qry); err != nil {
+			return nil, err
+		}
+
+		for rows.Next() {
+			if e := rows.Scan(&name, &desc); e != nil {
+				return nil, e
+			}
+			descMap[name] = desc
+		}
+	}
+
+	return descMap, nil
+}

@@ -123,8 +123,24 @@ func kv2Fld(kv keyval.KeyVal) (fd *chutils.FieldDef, order int, err error) {
 	return fd, order, nil
 }
 
-func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, map[string]keyval.KeyVal, error) {
-	fds := make(map[int]*chutils.FieldDef)
+// BuildFieldDefs builds a FieldDef map (required by TableDef) from the fields string.
+// The fields string is a KeyVal representation of the FieldDef. The keys are:
+//   - name: field name
+//   - order: order of field in the table, starting with 0
+//   - type: field type (int, float, string, fixedString, date)
+//   - length: length of field, required for int, float, fixedString
+//   - desc: field description
+//   - miss: value to use if the observed value is illegal
+//   - default: value to use if the observed value is null
+//   - levels: comma-separated list of legal values
+//   - high: maximum level
+//   - low: minimum level
+//   - format: Go-style date format (e.g. 20060102, 1/2/2006)
+//   - drop: yes/no  drop field when creating a table.
+//
+// The inputMap is a KeyVal represention of the fields string.  The key is the field name.
+func BuildFieldDefs(fields string) (fds map[int]*chutils.FieldDef, inputMap map[string]keyval.KeyVal, err error) {
+	fds = make(map[int]*chutils.FieldDef)
 
 	fldsX := strings.Split(fields, "\n")
 	var flds []string
@@ -134,7 +150,7 @@ func BuildFieldDefs(fields string) (map[int]*chutils.FieldDef, map[string]keyval
 		}
 	}
 
-	inputMap := make(map[string]keyval.KeyVal)
+	inputMap = make(map[string]keyval.KeyVal)
 
 	var key, val, kv []string
 	process, eof := false, false
