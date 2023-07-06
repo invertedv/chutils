@@ -1059,7 +1059,11 @@ func CommentFds(table string, fds map[int]*FieldDef, conn *Connect) {
 
 // GetComments returns a map of field comments from the slice of tables. The key is the field name and
 // the value is the comment
-func GetComments(conn *Connect, table ...string) (map[string]string, error) {
+func GetSystemFields(conn *Connect, sysField string, table ...string) (map[string]string, error) {
+	if sysField != "comment" && sysField != "type" {
+		return nil, fmt.Errorf("field must be either comment or type")
+	}
+
 	descMap := make(map[string]string)
 
 	for _, dbTable := range table {
@@ -1073,7 +1077,7 @@ func GetComments(conn *Connect, table ...string) (map[string]string, error) {
 			return nil, fmt.Errorf("need db.table format in %s", table)
 		}
 
-		qry := fmt.Sprintf("select name, comment from system.columns where table = '%s' AND database = '%s'", sep[1], sep[0])
+		qry := fmt.Sprintf("select name, %s from system.columns where table = '%s' AND database = '%s'", sysField, sep[1], sep[0])
 		var name, desc string
 
 		if rows, err = conn.Query(qry); err != nil {
@@ -1092,7 +1096,7 @@ func GetComments(conn *Connect, table ...string) (map[string]string, error) {
 }
 
 // GetComment returns the comment for "field" from db.table
-func GetComment(table, field string, conn *Connect) (comment string, err error) {
+func GetSystemField(table, sysField, field string, conn *Connect) (fieldVal string, err error) {
 	var rows *sql.Rows
 
 	sep := strings.Split(table, ".")
@@ -1100,16 +1104,16 @@ func GetComment(table, field string, conn *Connect) (comment string, err error) 
 		return "", fmt.Errorf("need db.table format in %s", table)
 	}
 
-	qry := fmt.Sprintf("select comment from system.columns where table = '%s' AND database = '%s' AND name='%s'", sep[1], sep[0], field)
+	qry := fmt.Sprintf("select %s from system.columns where table = '%s' AND database = '%s' AND name='%s'", sysField, sep[1], sep[0], field)
 
 	if rows, err = conn.Query(qry); err != nil {
 		return "", err
 	}
 
 	rows.Next()
-	if e := rows.Scan(&comment); e != nil {
+	if e := rows.Scan(&fieldVal); e != nil {
 		return "", e
 	}
 
-	return comment, nil
+	return fieldVal, nil
 }
