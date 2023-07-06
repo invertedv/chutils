@@ -1067,8 +1067,13 @@ func GetComments(conn *Connect, table ...string) (map[string]string, error) {
 			rows *sql.Rows
 			err  error
 		)
+
 		sep := strings.Split(dbTable, ".")
-		qry := fmt.Sprintf("select name, comment from system.columns where table = '%s' and database = '%s'", sep[1], sep[0])
+		if len(sep) != 2 {
+			return nil, fmt.Errorf("need db.table format in %s", table)
+		}
+
+		qry := fmt.Sprintf("select name, comment from system.columns where table = '%s' AND database = '%s'", sep[1], sep[0])
 		var name, desc string
 
 		if rows, err = conn.Query(qry); err != nil {
@@ -1084,4 +1089,27 @@ func GetComments(conn *Connect, table ...string) (map[string]string, error) {
 	}
 
 	return descMap, nil
+}
+
+// GetComment returns the comment for "field" from db.table
+func GetComment(table, field string, conn *Connect) (comment string, err error) {
+	var rows *sql.Rows
+
+	sep := strings.Split(table, ".")
+	if len(sep) != 2 {
+		return "", fmt.Errorf("need db.table format in %s", table)
+	}
+
+	qry := fmt.Sprintf("select comment from system.columns where table = '%s' AND database = '%s' AND name='%s'", sep[1], sep[0], field)
+
+	if rows, err = conn.Query(qry); err != nil {
+		return "", err
+	}
+
+	rows.Next()
+	if e := rows.Scan(&comment); e != nil {
+		return "", e
+	}
+
+	return comment, nil
 }
