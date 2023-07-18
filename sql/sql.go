@@ -17,8 +17,10 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go"
 	"io"
 	"strconv"
 	"strings"
@@ -65,7 +67,8 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 		return chutils.Wrapper(chutils.ErrSQL, "no sql statement")
 	}
 	qry := "SELECT * FROM (" + rdr.SQL + ") LIMIT 1"
-	if rows, err = rdr.conn.Query(qry); err != nil {
+
+	if rows, err = rdr.conn.QueryContext(clickhouse.WithQueryID(context.Background(), "abcdef"), qry); err != nil {
 		return
 	}
 	defer func() {
@@ -163,6 +166,7 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 
+	rdr.conn.Exec("KILL QUERY WHERE query_id = 'abcdef'")
 	return rdr.TableSpec().Check()
 }
 
