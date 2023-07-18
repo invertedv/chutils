@@ -20,11 +20,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go"
 	"io"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/invertedv/chutils"
 )
@@ -68,7 +69,10 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 	}
 	qry := "SELECT * FROM (" + rdr.SQL + ") LIMIT 1"
 
-	if rows, err = rdr.conn.QueryContext(clickhouse.WithQueryID(context.Background(), "abcdef"), qry); err != nil {
+	qOpt := clickhouse.WithQueryID("abcdef")
+	ctx := context.Background()
+	ctx = clickhouse.Context(ctx, qOpt)
+	if rows, err = rdr.conn.QueryContext(ctx, qry); err != nil {
 		return
 	}
 	defer func() {
@@ -166,7 +170,7 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 
-	rdr.conn.Exec("KILL QUERY WHERE query_id = 'abcdef'")
+	_, _ = rdr.conn.Exec("KILL QUERY WHERE query_id = 'abcdef'")
 	return rdr.TableSpec().Check()
 }
 
