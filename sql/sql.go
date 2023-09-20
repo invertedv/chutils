@@ -17,10 +17,13 @@
 package sql
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"io"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +59,47 @@ func NewReader(sqlStr string, conn *chutils.Connect) *Reader {
 	}
 }
 
+// randUnifInt generates a slice whose elements are random U[0,upper) int64's
+func randUnifInt(n, upper int) ([]int64, error) {
+	const bytesPerInt = 8
+
+	// generate random bytes
+	b1 := make([]byte, bytesPerInt*n)
+	if _, e := rand.Read(b1); e != nil {
+		return nil, e
+	}
+
+	outInts := make([]int64, n)
+	rdr := bytes.NewReader(b1)
+
+	for ind := 0; ind < n; ind++ {
+		r, e := rand.Int(rdr, big.NewInt(int64(upper)))
+		if e != nil {
+			return nil, e
+		}
+		outInts[ind] = r.Int64()
+	}
+
+	return outInts, nil
+}
+
+// randomLetters generates a string of length "length" by randomly choosing from a-z
+// This is copied from package utilities, but cannot import as it would be circular.
+func randomLetters(length int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz"
+
+	randN, err := randUnifInt(len(letters), len(letters))
+	if err != nil {
+		panic(err)
+	}
+
+	name := ""
+	for ind := 0; ind < length; ind++ {
+		name += letters[randN[ind] : randN[ind]+1]
+	}
+
+	return name
+}
 func (rdr *Reader) TableSpec() *chutils.TableDef {
 	return rdr.tableSpec
 }
@@ -69,7 +113,8 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 	}
 	qry := "SELECT * FROM (" + rdr.SQL + ") LIMIT 1"
 
-	qOpt := clickhouse.WithQueryID("abcdef")
+	id := randomLetters(10)
+	qOpt := clickhouse.WithQueryID(id)
 	ctx := context.Background()
 	ctx = clickhouse.Context(ctx, qOpt)
 	if rows, err = rdr.conn.QueryContext(ctx, qry); err != nil {
@@ -170,7 +215,7 @@ func (rdr *Reader) Init(key string, engine chutils.EngineType) (err error) {
 
 	rdr.tableSpec = chutils.NewTableDef(key, engine, fds)
 
-	_, _ = rdr.conn.Exec("KILL QUERY WHERE query_id = 'abcdef'")
+	_, _ = rdr.conn.Exec(fmt.Sprintf("KILL QUERY WHERE query_id = '%s'", id))
 	return rdr.TableSpec().Check()
 }
 
