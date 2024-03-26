@@ -2,6 +2,8 @@ module github.com/invertedv/chutils
 
 go 1.22
 
+toolchain go1.22.0
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.18.0
 	github.com/DATA-DOG/go-sqlmock v1.5.2

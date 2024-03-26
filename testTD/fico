@@ -1,0 +1,5 @@
+order: 1
+type: float
+length: 32
+low: 350
+high: 850

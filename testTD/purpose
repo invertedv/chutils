@@ -1,0 +1,4 @@
+order: 2
+type: fixedString
+length: 1
+levels: C,R,P,S

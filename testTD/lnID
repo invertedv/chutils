@@ -1,0 +1,9 @@
+order: 0
+type: int
+length: 64
+low: 0
+high: 100
+default: 0
+missing: -1
+description: this is my loan ID field
+key: 0
