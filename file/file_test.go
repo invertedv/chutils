@@ -368,21 +368,24 @@ func ExampleReader_Read_cSV() {
 		1x09,hello,9.9
 	*/
 
-	const inFile = "/home/will/tmp/zip_data.csv" // source data
 	const table = "testing.values"               // ClickHouse destination table
 	tmpFile := os.TempDir() + "/tmp.csv"         // temp file to write data to for import
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
+	user := os.Getenv("user")
+	password := os.Getenv("password")
+	con, err := chutils.NewConnect("127.0.0.1", user, password, clickhouse.Settings{})
 	if err != nil {
 		panic(err)
 	}
 	defer func() {
 		_ = con.Close()
 	}()
+	inFile := os.Getenv("data") + "/zips.csv"
 	f, err := os.Open(inFile)
 	if err != nil {
 		panic(err)
 	}
+
 	rdr := NewReader(inFile, ',', '\n', '"', 0, 1, 0, f, 50000)
 	defer func() {
 		_ = rdr.Close()

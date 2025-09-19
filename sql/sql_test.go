@@ -251,7 +251,7 @@ func TestWriter_Insert(t *testing.T) {
 // This example reads from a file.Reader and writes to ClickHouse using a sql.Writer
 func ExampleWriter_Write() {
 	/*
-		/home/test/data/zip_data.csv:
+		data/zip_data.csv:
 		id,zip,value
 		1A34,90210,20.8
 		1X88,43210,19.2
@@ -260,10 +260,12 @@ func ExampleWriter_Write() {
 		1x09,hello,9.9
 	*/
 
-	const inFile = "/home/will/tmp/zip_data.csv" // source data
+
 	const table = "testing.values"               // ClickHouse destination table
 	var con *chutils.Connect
-	con, err := chutils.NewConnect("127.0.0.1", "tester", "testGoNow", clickhouse.Settings{})
+	user := os.Getenv("user")
+	password := os.Getenv("password")
+	con, err := chutils.NewConnect("127.0.0.1", user, password, clickhouse.Settings{})
 	if err != nil {
 		panic(err)
 	}
@@ -272,6 +274,8 @@ func ExampleWriter_Write() {
 			panic(err)
 		}
 	}()
+
+	inFile := os.Getenv("data") + "/zips.csv"
 	f, err := os.Open(inFile)
 	if err != nil {
 		panic(err)
